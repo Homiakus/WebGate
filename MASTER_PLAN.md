@@ -16,9 +16,11 @@ Primary targets: Windows, Android as an early architecture gate, Linux, macOS.
 
 # 2. Current State
 
-The repository contains a portable Rust workspace with core/browser/transport/platform/app crates. Exact-SHA CI enforces formatting, build, tests, Clippy, lockfile, dependency/advisory/license/source policy and the internal crate dependency DAG. No Servo dependency, real transport, device-key adapter or SecureAcces control API exists yet.
+The repository contains a portable Rust workspace with core/browser/transport/platform/app crates. Exact-SHA CI enforces formatting, build, tests, Clippy, lockfile, dependency/advisory/license/source policy and the internal crate dependency DAG.
 
-A new security constraint discovered during T-004 pre-flight is now canonical: Servo must be treated as potentially compromised because its own renderer sandbox is not a reliable security boundary on Windows/Android. Long-lived secrets and privileged transport/authentication authority must therefore live behind a separate trusted broker capability boundary.
+T-004 is integrating a dedicated `webgate-browser-servo` adapter with Servo pinned exactly to `0.5.0`. The generated dependency graph is committed and must pass WebGate's own CI before Servo is accepted into `main`. No real protected proxy, transport provider, device-key adapter or SecureAcces control API exists yet.
+
+Servo is treated as potentially compromised because its renderer sandbox is not a reliable security boundary on Windows/Android. Long-lived secrets and privileged transport/authentication authority therefore live behind the planned trusted-broker capability boundary.
 
 # 3. Architecture Map
 
@@ -27,7 +29,9 @@ untrusted link
     ↓
 ┌────────────────────────────────────────────────────┐
 │ Browser capsule — assume compromise               │
-│ Servo + page/render/input                         │
+│ webgate-browser contract                          │
+│        ↑                                           │
+│ webgate-browser-servo → exact Servo release       │
 │ bounded active web capability only                │
 └─────────────────┬──────────────────────────────────┘
                   │ narrow authenticated capabilities
@@ -49,7 +53,7 @@ untrusted link
        SecureAcces authz
 ```
 
-Portable crates own contracts. Platform implementations and Servo-specific types stay outward of core. See `docs/architecture/ADR-0003-SERVO-PROCESS-ISOLATION.md`.
+Portable crates own contracts. Servo-specific types remain inside `webgate-browser-servo`; platform implementations remain outside core. See `docs/architecture/ADR-0003-SERVO-PROCESS-ISOLATION.md`.
 
 # 4. Baseline
 
@@ -64,6 +68,8 @@ Current executable baseline:
 - `cargo clippy --workspace --all-targets --locked -- -D warnings`;
 - `cargo-deny check --all-features`;
 - executable GitHub Actions pinned to immutable SHAs.
+
+T-004 adds a large third-party browser dependency graph. The graph is not accepted merely because Servo is published: exact WebGate candidate verification remains mandatory.
 
 The execution container lacks Rust/direct GitHub DNS, so candidate commits are verified by GitHub Actions on isolated work branches before synchronized non-force `main` fast-forward.
 
@@ -88,6 +94,8 @@ The execution container lacks Rust/direct GitHub DNS, so candidate commits are v
 - **I-017:** internal path dependencies carry explicit compatible versions; wildcard dependencies are denied.
 - **I-018:** the Servo/browser capsule is not trusted with long-lived device/bootstrap/transport/session-refresh secrets or generic privileged native APIs.
 - **I-019:** network fail-closed and browser-compromise containment are distinct properties and require separate tests.
+- **I-020:** Servo types and lifecycle objects do not leak through the portable `webgate-browser` API.
+- **I-021:** Servo is pinned to an exact reviewed release; upstream `main`/floating semver is not a production dependency source.
 
 # 6. Findings Registry
 
@@ -134,15 +142,14 @@ CI pins checkout v5 Node-24 commit.
 ## F-011 — Servo is not a sufficient renderer sandbox on Windows/Android
 **Status:** Planned · **Category:** Browser/Security · **Severity:** High · **Confidence:** Confirmed
 
-**Evidence:** current Servo source has an unsupported sandbox branch for Windows/Android/ARM; Servo's browser-engine guidance has described multiprocess/sandboxing as partial and historically limited to Linux/macOS.  
-**Location:** Servo 0.5.0 embedding/runtime source; WebGate browser architecture.  
-**Current behavior:** if WebGate embeds Servo together with long-lived secrets/transport control, a browser-engine compromise shares that privilege boundary.  
+**Evidence:** current Servo source has an unsupported sandbox branch for Windows/Android/ARM; Servo browser-engine guidance describes multiprocess/sandbox support as incomplete outside supported paths.  
+**Current behavior:** embedding Servo together with long-lived secrets/transport control would share the browser compromise boundary.  
 **Expected behavior:** browser compromise cannot export device keys, mutate trust roots, reconfigure unrestricted transport, or obtain long-lived refresh/bootstrap authority.  
-**Root cause:** Rust memory safety was being treated too close to a mature renderer sandbox assumption.  
+**Root cause:** Rust memory safety is not equivalent to a mature renderer sandbox.  
 **Blast radius:** browser architecture, identity, transport, Android/Windows platform runtime, session handling.  
 **Affected invariants:** I-006, I-018, I-019.  
 **Affected tasks:** T-004/T-005, T-006, T-009..T-012, T-019.  
-**Direction:** keep Servo primary, but introduce a portable trusted-broker capability boundary and platform-specific process sandboxing as defense in depth. ADR-0003 records the decision.
+**Direction:** keep Servo primary; enforce trusted-broker capability separation and platform sandboxing as defense in depth. ADR-0003 records the decision.
 
 # 7. Risk Register
 
@@ -151,18 +158,18 @@ CI pins checkout v5 Node-24 commit.
 | Servo/browser RCE reaches long-lived secrets | Critical | broker capability separation + platform sandbox defense in depth |
 | proxy failure escapes direct | Critical | negative tests + immutable proxy contract |
 | Servo misses required site capability | High | capability suite + explicit compatibility decision |
+| Servo dependency graph introduces advisory/license/native-build blockers | High | exact lockfile + cargo-deny + exact-SHA build gate |
 | Android lifecycle/process model breaks assumptions | High | early Android probe + idempotent broker/browser lifecycle |
 | primary transport blocked | High | independent fallback + two relays |
-| dependency/security drift | High | lockfile/cargo-deny/exact pins/upgrade gate |
 | hardware key support varies | High | algorithm-agile DeviceSigner |
 
 # 8. Pareto Improvements
 
 1. Preserve portable contracts and broker/browser privilege separation before secrets exist.
-2. Prove basic Servo embedding and fail-closed normal networking.
+2. Prove exact Servo embedding and normal fail-closed networking before real transport work.
 3. Implement narrow broker capability API before device/session/transport credentials.
 4. Validate Android lifecycle/isolation early.
-5. Add real transports only after browser/proxy boundaries are demonstrated.
+5. Keep the Servo dependency graph continuously locked and security-scanned.
 
 # 9. Dependency DAG
 
@@ -199,20 +206,64 @@ T-017 governance runs independently while blocked
 Exact corrected SHA passed verify + cargo-deny before `main` fast-forward.
 
 ## T-018 — Reconcile Servo sandbox gap into the trust architecture
-**Status:** DONE · **Priority:** P0 · **Type:** HARDEN · **Leverage:** HIGH
-
-**Problem:** Servo cannot be assumed to provide a renderer sandbox on Windows/Android.  
-**Evidence:** F-011.  
-**Goal:** define browser compromise assumptions, secret/privilege boundary, portable broker responsibilities and platform defense-in-depth direction before Servo code or credentials proliferate.  
-**Scope:** ADR-0003 + MASTER_PLAN.  
-**Non-goals:** process IPC implementation or OS sandbox code.  
-**Acceptance:** F-011 recorded; invariants I-018/I-019 added; downstream DAG changed so broker implementation precedes privileged identity/control-plane work.  
-**Verification:** existing repository CI must remain green because this is a planning-only change.
+**Status:** DONE · **Priority:** P0 · **Type:** HARDEN · **Leverage:** HIGH  
+F-011 recorded; ADR-0003 accepted; exact candidate passed existing CI and reached `main`.
 
 ## T-004 — Pin Servo and build minimal embedding adapter
-**Status:** READY · **Priority:** P0 · **Leverage:** HIGH
+**Status:** VERIFYING · **Priority:** P0 · **Type:** IMPROVE · **Leverage:** HIGH
 
-Pin current reviewed Servo crate release rather than upstream `main`. Keep Servo types inside a dedicated adapter boundary. Prove builder/event-loop/rendering-context API integration at compile time; no production secret material exists in this task. Record native prerequisites and exact dependency graph changes.
+### Problem
+The browser boundary existed only as a project-owned trait; Servo was still conceptual rather than a pinned, compile-verified dependency.
+
+### Evidence
+F-005 and the current Servo 0.5.0 public embedding API (`ServoBuilder`, `Servo::spin_event_loop`).
+
+### Goal
+Accept exactly one reviewed Servo release behind a dedicated adapter without contaminating portable browser/core contracts.
+
+### Scope
+- add `webgate-browser-servo`;
+- pin `servo = "=0.5.0"`;
+- commit the generated lock graph;
+- prove minimal builder/handle/event-loop API integration;
+- update architecture dependency policy;
+- keep temporary lock-generation workflow out of the final candidate.
+
+### Non-goals
+No real window/rendering surface, navigation, protected proxy, broker IPC, device secrets or production session handling.
+
+### Implementation
+`ServoBrowser` privately owns `Option<servo::Servo>`, constructs via `ServoBuilder::default().build()`, exposes only the existing `ProtectedBrowser` contract, and delegates event-loop pumping without exposing Servo types.
+
+### Invariants
+I-001, I-018, I-020, I-021.
+
+### Compatibility constraints
+Rust floor remains compatible with Servo 0.5.0. Servo-specific native/build prerequisites discovered by CI must become Findings before any workaround.
+
+### Edge cases
+Adapter type existence without runtime window, idempotent shutdown representation, no Servo dependency edge from portable core/browser contracts.
+
+### Tests
+Compile-time trait conformance plus full locked workspace CI and dependency policy.
+
+### Mutation tests
+N/A: this task contains adapter wiring rather than security policy logic.
+
+### Acceptance criteria
+Architecture check, locked metadata, format, workspace check/test/clippy and cargo-deny all PASS on the exact clean candidate SHA; no temporary lock-generation workflow exists in the candidate tree.
+
+### Dependencies
+T-018.
+
+### Blocks
+T-005, T-014.
+
+### Risk
+High dependency/native-build risk; low application behavior risk.
+
+### Rollback
+Revert the single T-004 main commit.
 
 ## T-005 — Prove fail-closed Servo normal networking
 **Status:** TODO · **Priority:** P0 · **Type:** HARDEN  
@@ -307,11 +358,11 @@ Browser treated as potentially compromised; long-lived secrets stay behind broke
 
 # 18. Rejected Decisions
 
-System-wide VPN default; secret bearer links; silent browser fallback; DPAPI/Win32 in core; shared user VPN keys; transport-layer authorization; weakening dependency policy; treating Rust memory safety as a substitute for browser privilege isolation.
+System-wide VPN default; secret bearer links; silent browser fallback; DPAPI/Win32 in core; shared user VPN keys; transport-layer authorization; weakening dependency policy; treating Rust memory safety as a substitute for browser privilege isolation; tracking Servo `main` or floating releases in production.
 
 # 19. Completed Tasks
 
-T-001, T-002, T-003 and T-018 are complete after their verified main pushes. Research/ADRs cover Servo, SecureAcces, cross-platform/Android, resilience and target topology.
+T-001, T-002, T-003 and T-018 are complete after verified `main` pushes. Research/ADRs cover Servo, SecureAcces, cross-platform/Android, resilience and target topology.
 
 # 20. Iteration Log
 
@@ -325,16 +376,24 @@ Portable workspace; exact candidate format/check/test/clippy PASS; pushed main.
 
 ## Iteration 3
 **Task:** T-003 · **Unexpected:** F-008/F-009/F-010 · **Result:** PASS  
-First candidate correctly failed cargo-deny and never reached main. Corrected exact SHA `acae35585b00b88f854dbfacd699db34ebabaff4` passed verify + dependency-policy and was fast-forwarded to main.
+First candidate correctly failed cargo-deny and never reached main. Corrected SHA `acae35585b00b88f854dbfacd699db34ebabaff4` passed verify + dependency-policy and was fast-forwarded to main.
 
 ## Iteration 4
 **Task:** T-018  
 **Finding addressed:** F-011  
-**Changes:** documented Servo compromise-containment model; split normal network isolation from RCE containment; introduced trusted broker boundary and changed dependency ordering.  
-**Tests:** current repository CI must remain PASS.  
-**Plan changes:** T-019 added P0 before privileged identity/control-plane work.  
-**Commit target:** `docs(security): define Servo compromise boundary`  
-**Push:** main after exact-SHA CI PASS  
+**Changes:** Servo compromise-containment model; trusted broker boundary; revised DAG.  
+**Tests:** verify + dependency-policy PASS on exact candidate.  
+**Commit:** `docs(security): define Servo compromise boundary`  
+**Push:** main  
+**Result:** PASS
+
+## Iteration 5
+**Task:** T-004  
+**Changes:** exact Servo 0.5.0 pin, dedicated adapter crate, generated lock graph, architecture-edge update.  
+**Tests:** architecture + locked metadata + fmt/check/test/clippy + cargo-deny on clean candidate.  
+**Plan changes:** added I-020/I-021; temporary lock-generator explicitly excluded from final tree.  
+**Commit target:** `feat(browser): pin Servo behind adapter boundary`  
+**Push:** main only after exact-SHA PASS  
 **Result:** VERIFYING
 
 # 21. Definition of Final Done

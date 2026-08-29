@@ -2,6 +2,7 @@
 members = [
     "crates/webgate-app",
     "crates/webgate-browser",
+    "crates/webgate-browser-servo",
     "crates/webgate-core",
     "crates/webgate-platform",
     "crates/webgate-transport",
