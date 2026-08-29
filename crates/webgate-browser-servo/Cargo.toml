@@ -1,0 +1,15 @@
+[package]
+name = "webgate-browser-servo"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+servo = { version = "=0.5.0" }
+webgate-browser = { version = "0.1.0", path = "../webgate-browser" }
+
+[lints]
+workspace = true

@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_INTERNAL_DEPENDENCIES: dict[str, set[str]] = {
     "webgate-core": set(),
     "webgate-browser": {"webgate-core"},
+    "webgate-browser-servo": {"webgate-browser"},
     "webgate-transport": {"webgate-core"},
     "webgate-platform": {"webgate-core"},
     "webgate-app": {
