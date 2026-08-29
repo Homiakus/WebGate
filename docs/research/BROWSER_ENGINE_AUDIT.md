@@ -4,251 +4,223 @@ Research date: **2026-08-29**
 
 ## Decision summary
 
-For the Windows-first WebGate client, the preferred production browser stack is:
+The project decision is now:
 
 ```text
-Rust native shell
-  + wry (thin WebView host)
-  + Microsoft WebView2 / Edge Chromium runtime
-  + one persistent WebView/profile
-  + app-local fail-closed HTTP CONNECT/SOCKS5 proxy
+Rust native WebGate shell
+  + Servo embedded as a Rust library
+  + one persistent protected WebView where practical
+  + WebGate-owned rendering/event-loop integration
+  + app-local fail-closed HTTP/HTTPS proxy
 ```
 
-**Do not use Tauri as a mandatory runtime layer for the protected browser capsule.** Tauri remains acceptable for auxiliary/admin UI, but the protected browser window should be implementable directly with `wry` plus a thin native window/event-loop layer. This minimizes framework surface while keeping the same WebView2 rendering engine.
+**Servo is the primary production target for WebGate.**
 
-For an absolute Windows-only minimum-host experiment, a native **C++/Win32 + WebView2 SDK** spike is worth benchmarking against Rust+wry. It will not make Blink/V8 rendering itself faster, because both use WebView2, but it provides the lower-bound host overhead.
+WebView2 remains an optional compatibility adapter only. CEF and Ultralight are research/benchmark alternatives, not the default path.
 
-The current recommendation is **Rust+wry/WebView2**, unless measurement proves a material end-user advantage for the C++ host.
+This supersedes the earlier audit conclusion that selected Wry + WebView2 as the primary engine. The reason for the change is product direction: WebGate is intentionally becoming a purpose-built Rust protected browser rather than a thin Chromium host.
+
+The latest 2026 Servo state materially improves feasibility: Servo is published as an embeddable Rust crate, provides `Servo`/`WebView` APIs, Windows builds, HTTP and HTTPS proxy support, and an LTS release track. The trade-off is that WebGate must own a strict compatibility and regression suite because Servo still does not equal Chromium's arbitrary-site coverage.
 
 ---
 
 ## What “fastest” means for WebGate
 
-WebGate is not a general-purpose browser. Its workload is a small set of trusted document sites reached through an application-local protected transport. Therefore the important metrics are:
+WebGate is not a general-purpose browser. Its workload is a controlled private document site reached through an application-local protected transport.
+
+The relevant metrics are:
 
 1. cold process start → visible native window;
-2. cold start → WebView ready;
-3. click/deep-link → first protected document paint;
+2. cold start → engine ready;
+3. deep-link click → first protected document paint;
 4. warm navigation latency;
 5. idle RSS / working set;
 6. CPU at idle;
-7. scroll/compositing smoothness for long documents/PDF-like pages;
-8. JavaScript throughput for the actual document site;
-9. number of helper processes;
+7. scroll/compositing stability for long documents;
+8. JavaScript throughput for the actual site;
+9. process/thread count;
 10. binary/runtime distribution cost;
-11. ability to bind **only this WebView** to the WebGate proxy;
-12. fail-closed behavior if the local transport disappears;
+11. ability to force protected traffic through only the WebGate proxy;
+12. fail-closed behavior if local transport disappears;
 13. security-update latency;
-14. compatibility with the existing site.
+14. compatibility with the actual documents application.
 
-A synthetic JS benchmark alone is not a valid browser selection criterion.
+Synthetic JavaScript scores alone do not decide the engine.
 
 ---
 
-# Candidate 1 — WebView2 (Blink + V8) via Rust `wry`
+# Candidate 1 — Servo (Rust)
 
 ## Verdict
 
-**Primary production choice.**
+**PRIMARY / CANONICAL ENGINE.**
 
-### Why it fits WebGate
+### Why Servo fits WebGate
 
-- Full modern Chromium/Edge web compatibility.
-- Hardware-accelerated Chromium rendering/compositing.
-- Mature multi-process sandbox architecture inherited from Edge/Chromium.
-- Evergreen runtime provides rapid browser security updates independently from WebGate releases.
-- `wry` supports per-WebView proxy configuration using HTTP CONNECT or SOCKS5 on Windows.
-- No need to bundle a complete Chromium distribution with the application.
-- Existing Edge/WebView2 binaries may already be resident in memory, improving warm startup.
-- Microsoft explicitly documents startup, process and memory optimization techniques.
+- written in Rust;
+- designed explicitly as an embeddable browser engine;
+- exposes an embedding API around `Servo`, `WebView`, delegates and rendering contexts;
+- supports Windows and has a cross-platform direction;
+- supports HTTP and HTTPS proxies;
+- provides a library release and LTS track;
+- modular enough for WebGate to own browser lifecycle, transport policy and security boundaries;
+- avoids making Chromium/WebView2 a permanent architectural dependency.
 
-### Important performance characteristics
-
-Microsoft documents that WebView2 is multi-process and that cold creation has a real startup cost. The practical optimization is therefore not to replace Chromium with another wrapper, but to:
-
-- keep one WebView alive and navigate it instead of recreating controls;
-- use a local User Data Folder on fast storage;
-- use the Evergreen runtime;
-- create the native shell immediately;
-- pre-initialize the WebView environment while WebGate establishes transport;
-- avoid multiple protected WebViews/tabs unless needed;
-- avoid using the WebView to draw trivial startup UI.
-
-### Recommended WebGate startup pipeline
+### Embedding shape
 
 ```text
-process start
-   |
-   +--> create tiny native Rust window immediately
-   |
-   +--> start restricted localhost proxy on ephemeral port
-   |       (listening immediately, fail-closed until tunnel ready)
-   |
-   +--> initialize WebView2 environment/WebView against that proxy
-   |
-   +--> establish secure transport in parallel
-   |
-   +--> verify origin health
-   |
-   `--> navigate protected WebView to requested deep-link
+webgate-app
+    ↓
+webgate-browser trait
+    ↓
+webgate-browser-servo
+    ├── ServoBuilder / Servo
+    ├── WebViewBuilder / WebView
+    ├── WebViewDelegate
+    ├── RenderingContext
+    └── EventLoopWaker / spin_event_loop
 ```
 
-This overlaps the two expensive operations: browser initialization and secure-network establishment.
+The browser adapter translates Servo-specific lifecycle/events into WebGate-owned typed interfaces.
 
-### Rust host
-
-Use `wry` directly rather than requiring the complete Tauri runtime for the browser capsule.
-
-Candidate shape:
+### Networking shape
 
 ```text
-webgate.exe
-  crates/app-shell      Rust
-  crates/browser-wry    Rust
-  crates/policy         Rust
-  crates/transport      Rust interface/supervisor
-  sidecar/provider      transport implementation
+Servo
+  ↓
+HTTP/HTTPS proxy configuration
+  ↓
+127.0.0.1:<ephemeral WebGate proxy>
+  ↓
+restricted destination policy
+  ↓
+secure transport provider
+  ↓
+private origin
 ```
 
-`wry::WebViewBuilder::with_proxy_config()` supports HTTP CONNECT and SOCKS5. On Windows, Wry translates this to the WebView2 `--proxy-server` browser argument.
+The proxy starts in fail-closed state. Servo is not allowed a protected direct-connect path.
 
-### C++ host comparison
+### Major strengths
 
-Native Win32/C++ with the WebView2 SDK uses the same Edge rendering engine. Therefore the expected performance difference is limited to host startup/event-loop/integration overhead, not HTML layout, V8 execution or GPU compositing.
-
-A C++ spike should be treated as the **host-overhead control**, not as a different browser engine.
+- memory-safe language across browser engine and WebGate control code;
+- browser engine tailored toward embedding rather than generic desktop browsing;
+- parallel/concurrent design;
+- direct Rust integration;
+- no Edge Evergreen runtime dependency;
+- better long-term cross-platform consistency than a Windows-only WebView2 design;
+- browser/transport architecture can evolve together behind explicit interfaces.
 
 ### Main risks
 
-- Chromium-family baseline memory/process footprint is not minimal.
-- cold WebView initialization is measurable;
-- proxy configuration must be set before protected navigation;
-- browser/runtime policy must be hardened to avoid navigation or protocol escape.
+- lower arbitrary-web compatibility than Chromium;
+- embedding API still evolves and monthly releases may break callers;
+- some browser capabilities can remain incomplete;
+- production requires aggressive compatibility, visual and network-isolation testing;
+- WebGate may need to simplify/adjust its own documentation site around Servo rather than demand arbitrary-site support.
+
+### Production release rule
+
+Prefer a qualified Servo LTS line after the WebGate site suite passes. Test newer Servo releases continuously, but promote only after:
+
+- build/reproducibility checks;
+- security/dependency scan;
+- REQUIRED capability tests;
+- visual regression;
+- network-escape tests;
+- performance regression;
+- crash/recovery tests.
 
 ### Sources
 
-- Microsoft WebView2 performance guidance: https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/performance
-- Wry WebView proxy API: https://docs.rs/wry/latest/wry/struct.WebViewBuilder.html
-- Wry Windows integration: https://docs.rs/wry/latest/x86_64-pc-windows-msvc/wry/trait.WebViewBuilderExtWindows.html
+- Servo project: https://servo.org/
+- Servo library/docs: https://doc.servo.org/
+- crates.io/LTS announcement: https://servo.org/blog/2026/04/13/servo-0.1.0-release/
+- proxy support: https://servo.org/blog/2026/01/23/december-in-servo/
+- HTTPS proxy support: https://servo.org/blog/2026/02/28/january-in-servo/
+- current embedding API progress: https://servo.org/blog/2026/07/31/june-in-servo/
 
 ---
 
-# Candidate 2 — Native C++/Win32 + WebView2
+# Candidate 2 — WebView2 via Rust/Wry
 
 ## Verdict
 
-**Benchmark as the absolute Windows host-overhead floor.**
+**Compatibility fallback only.**
 
-Use only if it provides a measured, meaningful advantage over Rust+wry.
+WebView2 remains technically excellent for existing arbitrary modern web applications:
 
-### Strengths
+- Blink/V8 compatibility;
+- mature Chromium sandbox/process model;
+- Evergreen security updates;
+- strong Windows integration;
+- Wry can configure WebView-specific HTTP CONNECT/SOCKS5 proxy behavior.
 
-- minimum abstraction around Microsoft’s native API;
-- direct control over WebView2 Environment/Controller lifecycle;
-- no Rust-to-COM wrapper layer;
-- straightforward access to low-level Windows diagnostics and ETW.
+However, it is no longer the project baseline because WebGate has chosen Servo as a first-class Rust browser engine rather than a Chromium host.
 
-### Weaknesses
+A `webgate-browser-webview2` adapter may be implemented only when a documented production requirement cannot reasonably be met with Servo.
 
-- same underlying Blink/V8/WebView2 processes as Rust+wry;
-- C++ memory-safety burden in the security-sensitive client shell;
-- more bespoke lifecycle/RAII/error-handling code;
-- likely tiny difference in steady-state rendering because rendering is out-of-process inside WebView2.
+Fallback must be:
 
-### Decision rule
-
-Do **not** choose C++ merely because C++ is assumed to be faster. Choose it only if the WebGate workload benchmark shows a user-visible gain, e.g. materially better p95 click-to-first-paint, RAM, or launch time.
+- explicit;
+- policy-controlled;
+- observable;
+- protected by the same local proxy;
+- subject to the same navigation/origin policy;
+- never triggered silently by a Servo page error.
 
 ---
 
-# Candidate 3 — Ultralight (C/C++, WebKit + JavaScriptCore)
+# Candidate 3 — Native C++/Win32 + WebView2
 
 ## Verdict
 
-**Best experimental candidate for minimum footprint / custom renderer, but not current production default.**
+**Benchmark/control only.**
 
-Ultralight explicitly targets lightweight high-performance embedded HTML and offers CPU/GPU renderers. It is based on a custom WebKit port and JavaScriptCore and exposes C/C++ APIs plus a portable C API.
+A native C++ host can establish the lower bound of host overhead around the same WebView2 engine, but it does not make Blink/V8 intrinsically faster than Rust/Wry. It also introduces unnecessary memory-safety burden into a security-sensitive shell.
 
-### Why it is attractive
-
-- designed specifically for embedded apps instead of general browser embedding;
-- customizable rendering and memory behavior;
-- direct native ↔ JavaScriptCore integration;
-- CPU or GPU renderer;
-- likely attractive startup/resource profile for controlled HTML applications.
-
-### Why it is not the WebGate default yet
-
-- proprietary core components/commercial licensing considerations;
-- not full browser parity: upstream documents exceptions including WebGL, WebRTC and HTML5 audio/video limitations/experimental status;
-- less confidence than Chromium for arbitrary existing enterprise/document web apps;
-- application-local proxy/fail-closed networking behavior needs a dedicated proof before it can satisfy the central WebGate invariant;
-- Rust bindings are community bindings, while official APIs are C/C++/C.
-
-### Use case where Ultralight can win
-
-If the protected document site is deliberately constrained to a known HTML/CSS/JS profile and WebGate owns the entire web application, Ultralight should be included in the benchmark because it may beat Chromium-family engines on startup and memory.
-
-### Sources
-
-- https://ultralig.ht/
-- https://github.com/ultralight-ux/Ultralight
-- https://docs.ultralig.ht/docs/using-the-cpp-api
-- https://docs.ultralig.ht/docs/using-the-c-api
+Use only for comparative measurements if needed.
 
 ---
 
-# Candidate 4 — CEF / Chromium Embedded Framework (C++)
+# Candidate 4 — Ultralight (C/C++)
 
 ## Verdict
 
-**Not recommended for WebGate unless a WebView2 limitation is discovered.**
+**Experimental low-footprint candidate, not default.**
 
-CEF provides maximum Chromium control and excellent compatibility, but it brings a full Chromium embedding/distribution stack. CEF itself documents the Chromium multi-process model with browser, renderer and GPU processes.
+Strengths:
 
-For WebGate this duplicates capabilities already available from WebView2 while increasing packaging and update responsibility.
+- optimized for embedded HTML UI;
+- potentially excellent startup and memory profile;
+- custom CPU/GPU rendering;
+- direct C/C++ APIs.
 
-### When CEF would become justified
+Weaknesses for WebGate:
 
-- Windows WebView2 policy prevents a required networking/sandbox capability;
-- exact Chromium version pinning is mandatory;
-- deep Chromium internals/handlers unavailable in WebView2 are required;
-- WebGate must ship the same Chromium implementation across desktop operating systems.
+- proprietary/commercial considerations;
+- incomplete browser parity;
+- app-local fail-closed transport behavior would need separate proof;
+- official path is not Rust-first.
 
-### Source
-
-- https://chromiumembedded.github.io/cef/general_usage.html
+Keep as a benchmark candidate only if a future ultra-low-footprint requirement justifies it.
 
 ---
 
-# Candidate 5 — Servo (Rust)
+# Candidate 5 — CEF
 
 ## Verdict
 
-**Strategic R&D candidate, not production browser for WebGate in 2026.**
+**Not recommended unless a future hard requirement demands bundled Chromium control.**
 
-Servo is particularly interesting because it is a Rust browser engine explicitly pursuing a lightweight, high-performance embedding model.
+CEF offers excellent compatibility but brings:
 
-However, as of the 2026 research baseline:
+- a large Chromium runtime;
+- more helper processes;
+- larger packaging/update burden;
+- greater browser supply-chain ownership.
 
-- Servo still describes itself as a prototype browser engine;
-- the embedding API remains under active development;
-- a stable C API wrapper is only now being expanded;
-- not all WebView APIs are exposed through that C API;
-- printing is still not supported;
-- several embedding/JS bridge capabilities are active roadmap work.
-
-For a security-oriented document client, web compatibility and predictable lifecycle are more important than theoretical parallel-engine advantages.
-
-### Recommendation
-
-Keep a `browser-servo` experimental crate behind the browser provider abstraction once WebGate reaches a mature state. Re-evaluate quarterly or at major Servo embedding milestones.
-
-### Sources
-
-- https://servo.org/
-- https://github.com/servo/servo
-- https://servo.org/blog/2026/07/31/june-in-servo/
+Servo is the default; WebView2 is the compatibility fallback. CEF therefore has no current production role.
 
 ---
 
@@ -256,83 +228,95 @@ Keep a `browser-servo` experimental crate behind the browser provider abstractio
 
 ## Verdict
 
-**Excellent compact HTML UI engine, wrong default for an existing arbitrary web site.**
+**Potential app-chrome/UI tool, not the protected site engine.**
 
-Sciter explicitly uses its own HTML/CSS engine and JS runtime and intentionally differs from a full W3C browser because its goal is compact desktop UI.
-
-That can be extremely useful for WebGate’s *native application chrome*, settings or diagnostics. It is not the safest compatibility choice for loading an existing documents web application as-is.
-
-### Sources
-
-- https://docs.sciter.com/docs/intro/
+Its compact desktop-UI focus is useful for custom application surfaces but it is not the target engine for loading the existing web application contract.
 
 ---
 
-# Ranking for WebGate
+# Updated ranking for WebGate
 
-| Rank | Engine/host | Web compatibility | Expected footprint | Startup potential | Per-app proxy fit | Production maturity for task | Decision |
-|---|---|---:|---:|---:|---:|---:|---|
-| 1 | **Rust + wry + WebView2** | Excellent | Medium | High after optimization | Excellent | Excellent | **Default** |
-| 2 | **C++ Win32 + WebView2** | Excellent | Medium | Potentially marginally best host overhead | Excellent | Excellent | Benchmark control |
-| 3 | **Ultralight C++** | Good, not full browser parity | Low | Potentially excellent | Must be proven | Good but proprietary/core constraints | Experimental benchmark |
-| 4 | **CEF C++** | Excellent | High | Medium | Excellent/control-rich | Excellent | Fallback only |
-| 5 | **Servo Rust** | Improving | Potentially low | Potentially excellent | Needs integration work | Not yet | R&D |
-| 6 | **Sciter** | Desktop-UI oriented, not full web parity | Very low | Excellent | Not the target model | Mature for UI | App chrome only |
+| Rank | Engine/host | Rust-first | Web compatibility | Footprint potential | App-local proxy fit | Role |
+|---|---|---:|---:|---:|---:|---|
+| 1 | **Servo** | Excellent | Improving / must be tested | Excellent potential | Good, native proxy support | **Primary** |
+| 2 | **Rust + Wry + WebView2** | Good host, Chromium engine | Excellent | Medium | Excellent | Explicit compatibility fallback |
+| 3 | **C++ + Ultralight** | No | Good for controlled apps | Excellent | Must be proven | Experimental benchmark |
+| 4 | **C++ + WebView2** | No | Excellent | Medium | Excellent | Benchmark control |
+| 5 | **CEF** | No | Excellent | High | Excellent/control-rich | Last-resort Chromium option |
+| 6 | **Sciter** | No | UI-oriented | Excellent | Not target model | App chrome only |
 
 ---
 
-# Architecture refinement: browser provider boundary
+# Browser provider boundary
 
-To avoid hard-coding the engine into all WebGate code, introduce:
+WebGate must not expose engine-specific APIs to unrelated crates.
 
 ```rust
 pub trait ProtectedBrowser {
-    async fn initialize(&mut self, cfg: BrowserConfig) -> Result<()>;
-    async fn navigate(&mut self, target: ProtectedUrl) -> Result<()>;
-    async fn clear_session(&mut self) -> Result<()>;
+    async fn start(&mut self, policy: BrowserPolicy) -> Result<()>;
+    async fn navigate(&mut self, target: ProtectedTarget) -> Result<()>;
+    async fn health(&self) -> BrowserHealth;
+    async fn clear_session_data(&mut self) -> Result<()>;
     async fn shutdown(&mut self) -> Result<()>;
 }
 ```
 
-Initial implementation:
+Implementations:
 
 ```text
-browser-webview2-wry
+webgate-browser-servo        # canonical
+webgate-browser-webview2     # optional compatibility adapter
 ```
 
-Benchmark implementations:
-
-```text
-browser-webview2-native-cpp   # small benchmark harness, not necessarily shipped
-browser-ultralight            # experimental
-browser-servo                 # future R&D
-```
-
-Do not abstract low-level DOM/browser capabilities prematurely. The abstraction should only cover the WebGate-owned lifecycle and policy boundary.
+Do not prematurely abstract arbitrary DOM internals. The interface exists to isolate lifecycle, navigation, health and security policy.
 
 ---
 
-# Mandatory benchmark before final engine freeze
+# Servo compatibility suite
 
-Create `bench/browser-capsule/` with the same protected site fixture and transport stub for all candidates.
+Maintain a machine-readable inventory of actual site requirements.
 
-## Test machine states
+At minimum classify:
 
-- cold boot / no browser runtime resident;
-- WebView2/Edge warm;
-- low-memory pressure;
-- integrated GPU and discrete GPU where available;
-- transport healthy;
-- transport delayed by 100/500/1500 ms.
+```text
+auth/session cookies
+TLS/certificate behavior
+fetch/XHR
+forms
+CSS/layout used by product
+JavaScript APIs used by product
+storage used by product
+file/document navigation
+downloads
+printing
+clipboard
+WebSocket/SSE
+Cyrillic + IME
+accessibility
+```
 
-## Measurements
+Every item is:
 
-Capture at least 30 launches per variant:
+```text
+REQUIRED
+OPTIONAL
+NOT USED
+```
+
+A REQUIRED failure blocks production or results in a deliberate site-side redesign/implementation plan.
+
+---
+
+# Mandatory performance benchmark
+
+Use the real protected site fixture with the same WebGate proxy/transport stub.
+
+Measure at least:
 
 ```text
 T_native_window
 T_proxy_listening
-T_engine_ready
+T_servo_ready
 T_transport_ready
 T_first_navigation_start
 T_DOMContentLoaded
@@ -346,8 +330,7 @@ System metrics:
 peak working set
 idle working set after 30 s
 CPU time to first paint
-GPU process usage
-process count
+process/thread count
 bytes read from disk
 binary/install footprint
 ```
@@ -355,24 +338,28 @@ binary/install footprint
 Web workload:
 
 - landing page;
-- large long-form documentation page;
+- long documentation page;
 - client-side routed page;
 - table-heavy page;
 - image-heavy page;
-- PDF workflow if required;
-- WebSocket/SSE if used by the product;
+- file/document workflow;
 - authentication/session flow backed by SecureAcces.
 
-## Security measurements are co-equal with speed
+---
 
-Every candidate must also pass:
+# Security measurements are co-equal with speed
+
+Servo must pass:
 
 ```text
 local proxy killed -> no direct protected-origin connection
-DNS failure -> no public DNS escape for protected names
+transport unavailable -> protected content unavailable
+DNS failure -> no protected-name escape
 redirect -> navigation policy remains enforced
-new window -> cannot escape protected route
-IPv6 -> cannot bypass proxy policy
+external navigation -> explicit system-browser policy only
+IPv4/IPv6 -> cannot bypass protected proxy policy
+Servo crash -> no silent direct or engine fallback
+unsupported page feature -> controlled error, not security downgrade
 ```
 
 A faster engine that fails any network-isolation invariant is disqualified.
@@ -383,13 +370,15 @@ A faster engine that fails any network-isolation invariant is disqualified.
 
 For the next WebGate implementation slice:
 
-1. Replace the assumption “Tauri 2 is the browser” with **“WebView2 is the browser engine; Wry is the preferred Rust host.”**
-2. Build M1 using **Rust + Wry + WebView2 directly**.
-3. Keep one long-lived WebView and profile.
-4. Start the loopback fail-closed proxy first and initialize WebView2 against it while the secure transport connects in parallel.
-5. Build a tiny **C++/Win32 + WebView2 benchmark harness** to establish the minimum host overhead.
-6. Build an **Ultralight C++ benchmark harness** only if the existing documents site passes a compatibility probe and licensing is acceptable.
-7. Do not move to CEF unless WebView2 fails a concrete requirement.
-8. Keep Servo on the research watchlist rather than the production critical path.
+1. Build M1 directly around **Servo**.
+2. Pin a Servo release/LTS candidate.
+3. Implement the minimal Rust native embedding shell.
+4. Bind protected HTTP/HTTPS traffic to the WebGate local fail-closed proxy before navigation.
+5. Keep one persistent Servo/WebView where practical.
+6. Build the required-site capability suite immediately, not after the browser is finished.
+7. Add visual and performance regression baselines.
+8. Keep WebView2 behind an optional compatibility adapter only.
+9. Do not silently fall back from Servo to another browser engine.
+10. Treat Servo upgrades as security-sensitive dependency upgrades with qualification gates.
 
-The expected Pareto optimum is **Rust + Wry + WebView2**: essentially native Chromium rendering speed and compatibility, minimal WebGate-specific wrapper overhead, excellent per-WebView proxy fit, rapid security updates, and substantially lower implementation/supply-chain cost than shipping CEF.
+The project decision is now unambiguous: **Servo is the browser engine WebGate is built around.**
