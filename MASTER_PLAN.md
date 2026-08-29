@@ -2,32 +2,39 @@
 
 Research baseline: **2026-08-29**
 
-This is the living implementation plan for WebGate. It is intentionally ordered by risk: prove browser-scoped routing and fail-closed semantics first, then add real transports, then identity/control-plane integration, then production resilience.
+Canonical browser decision: **Servo is the primary protected browser engine.** See `docs/architecture/ADR-0001-BROWSER-ENGINE.md`.
+
+This is the living implementation plan for WebGate. It is intentionally ordered by risk: prove Servo embedding and browser-scoped fail-closed networking first, then add real transports, then identity/control-plane integration, then production resilience.
 
 ## 0. Architecture invariants
 
 These rules are non-negotiable unless an explicit ADR changes the product model:
 
-1. Protected browser traffic is application-scoped by default; WebGate does not change the OS default route.
-2. Transport loss must fail closed. The protected WebView never silently retries through direct Internet.
-3. External browser/navigation traffic is separate from protected traffic.
-4. WebGate does not implement business authorization; SecureAcces remains authoritative server-side.
-5. Links identify resources; they are not long-lived bearer credentials.
-6. Device private keys are generated on-device and never distributed in configuration files.
-7. All bootstrap bundles, remote policies and updates are signed.
-8. Remote policy may tighten but may not weaken compiled hard security invariants.
-9. Transport implementations are replaceable providers, not dependencies of browser/business code.
-10. Production must have at least two materially independent network paths/failure domains.
+1. **Servo is the default protected browser engine.**
+2. Protected browser traffic is application-scoped by default; WebGate does not change the OS default route.
+3. Transport loss must fail closed. Servo never silently retries protected traffic through direct Internet.
+4. Browser-engine failure must not cause a silent switch to another engine or system browser.
+5. External browser/navigation traffic is separate from protected traffic.
+6. WebGate does not implement business authorization; SecureAcces remains authoritative server-side.
+7. Links identify resources; they are not long-lived bearer credentials.
+8. Device private keys are generated on-device and never distributed in configuration files.
+9. All bootstrap bundles, remote policies and updates are signed.
+10. Remote policy may tighten but may not weaken compiled hard security invariants.
+11. Transport implementations are replaceable providers, not dependencies of browser/business code.
+12. Browser engines sit behind a WebGate interface; Servo is canonical, WebView2 is optional explicit compatibility fallback only.
+13. Production must have at least two materially independent network paths/failure domains.
 
 ---
 
 # Phase 0 — Research and contracts
 
-Status: **IN PROGRESS / baseline committed**
+Status: **IN PROGRESS / Servo baseline accepted**
 
 Completed:
 
 - tooling audit;
+- browser-engine audit;
+- Servo primary-engine ADR;
 - target architecture;
 - SecureAcces compatibility analysis;
 - primary/fallback transport shortlist;
@@ -40,22 +47,25 @@ Remaining:
 - formal threat model (STRIDE-style plus abuse cases);
 - ADR for app-local proxy vs system TUN;
 - ADR for primary transport provider;
+- Servo required-feature compatibility matrix for the actual documents site;
 - signed configuration wire schema;
 - local IPC protocol schema;
 - device registration wire schema;
-- explicit license/distribution policy for bundled sidecars.
+- explicit license/distribution policy for bundled sidecars;
+- production Servo release/LTS pinning policy.
 
 Exit criteria:
 
 - every client/server trust boundary has an owner and test strategy;
 - no security-sensitive wire format remains informal;
-- bundled dependency licenses are reviewed.
+- bundled dependency licenses are reviewed;
+- required site capabilities are enumerated and mapped to Servo support/tests.
 
 ---
 
-# Phase 1 — Windows protected-browser proof of concept
+# Phase 1 — Servo protected-browser proof of concept
 
-Goal: prove the central product idea before introducing a real VPN protocol.
+Goal: prove the central product idea using Servo before introducing a real VPN protocol.
 
 ## 1.1 Rust workspace
 
@@ -64,45 +74,80 @@ Create:
 ```text
 crates/webgate-app
 crates/webgate-browser
+crates/webgate-browser-servo
 crates/webgate-policy
 crates/webgate-transport
 crates/webgate-observability
 crates/webgate-platform
 ```
 
+Reserve, but do not require for M1:
+
+```text
+crates/webgate-browser-webview2
+```
+
 Use:
 
 - Rust stable;
-- Tauri 2;
-- Tokio;
-- Wry/WebView2 through Tauri;
+- pinned Servo library release/LTS candidate;
+- Tokio where asynchronous orchestration is useful;
+- native window/event-loop integration;
+- Servo `Servo` / `WebView` embedding APIs;
+- `RenderingContext`;
+- `EventLoopWaker` / `Servo::spin_event_loop`;
 - `tracing`;
 - strict linting.
 
-## 1.2 Mock local proxy
+## 1.2 Servo embedding shell
 
-Implement a restricted localhost HTTP CONNECT/SOCKS5 test proxy.
+Implement the smallest practical browser capsule:
+
+- native top-level window;
+- Servo engine initialization;
+- one persistent protected WebView where practical;
+- rendering context lifecycle;
+- resize/DPI/input/IME handling;
+- browser error surface owned by WebGate, not by arbitrary web content;
+- controlled session/data directory.
+
+## 1.3 Mock local proxy
+
+Implement a restricted localhost HTTP/HTTPS proxy test gate.
 
 Required behavior:
 
 - bind `127.0.0.1:0`;
 - return actual ephemeral port to parent;
-- permit only configured test origin;
+- permit only configured test origins;
 - reject all other destinations;
+- start in fail-closed state;
 - no direct fallback;
-- bounded connections/timeouts.
+- bounded connections/timeouts;
+- deny non-WebGate/general proxy usage where practical.
 
-## 1.3 WebView policy
+## 1.4 Servo network binding
 
-- configure WebView proxy before protected navigation;
-- navigation allowlist;
-- new-window interception;
-- external links open in system browser;
-- devtools disabled in release;
+Configure Servo protected networking to use the WebGate local proxy before any protected navigation.
+
+Requirements:
+
+- HTTP and HTTPS traffic for the protected session follows WebGate proxy policy;
+- no environment/system proxy ambiguity in production configuration;
+- remote DNS/name-resolution behavior is explicitly tested;
+- protected-origin direct IP and alias paths cannot bypass policy.
+
+## 1.5 Navigation policy
+
+- protected origin allowlist;
+- strict redirect policy;
+- new-window/popup interception;
+- external links opened only by explicit system-browser policy;
+- no secrets in URLs;
 - explicit download policy;
-- dedicated WebView data directory.
+- debugging/developer features disabled or gated in release.
 
-## 1.4 Kill-switch tests
+## 1.6 Kill-switch tests
 
 Automated acceptance tests must prove:
 
@@ -111,21 +156,112 @@ proxy alive   → protected site reachable
 proxy stopped → protected site NOT reachable directly
 ```
 
-Also test direct-IP, DNS alias, redirect and subresource attempts.
+Also test:
+
+- direct IP;
+- DNS alias;
+- redirects;
+- subresources;
+- fetch/XHR;
+- WebSocket/SSE when used;
+- IPv4/IPv6 differences;
+- browser crash/restart;
+- unsupported-page behavior.
 
 Exit criteria:
 
-- WebGate opens a protected test site through only its local proxy;
+- Servo opens a protected test site only through the WebGate local proxy;
 - Chrome/Telegram/system traffic is unaffected;
-- stopping the proxy cannot produce direct protected-origin traffic.
+- stopping the proxy cannot produce direct protected-origin traffic;
+- Servo failure cannot trigger a silent system-browser or WebView2 fallback.
 
 ---
 
-# Phase 2 — Transport provider SPI and supervision
+# Phase 2 — Servo site-compatibility and performance gate
 
-Goal: make network protocol implementation replaceable.
+Goal: prove that Servo is not only secure enough for the capsule but compatible and fast enough for the actual documentation workload.
 
-## 2.1 Provider contract
+## 2.1 Machine-readable compatibility inventory
+
+Cover at minimum:
+
+- TLS/certificates;
+- cookies and session handling;
+- fetch/XHR;
+- forms;
+- CSS/layout used by the site;
+- JavaScript APIs used by the site;
+- document/file viewing workflow;
+- downloads if required;
+- printing if required;
+- clipboard if required;
+- WebSocket/SSE if required;
+- local/session storage if required;
+- Cyrillic text input and IME;
+- accessibility requirements.
+
+Classify every capability:
+
+```text
+REQUIRED
+OPTIONAL
+NOT USED
+```
+
+Required unsupported features block production or trigger deliberate site simplification/implementation work.
+
+## 2.2 Visual and behavioral regression suite
+
+- golden screenshots for representative pages;
+- layout overflow/overlap checks;
+- interaction scripts;
+- form behavior;
+- authentication/session behavior;
+- long-document scrolling;
+- file/document navigation.
+
+## 2.3 Performance baseline
+
+Measure:
+
+- process start → native window;
+- process start → Servo ready;
+- deep-link click → first protected paint;
+- warm navigation;
+- idle/active RSS;
+- CPU at idle;
+- frame stability while scrolling;
+- relevant JavaScript workload;
+- startup under cold filesystem cache where practical;
+- recovery after transport reconnect.
+
+## 2.4 Compatibility fallback gate
+
+Only if a production-critical requirement cannot be satisfied reasonably with Servo may an optional WebView2 adapter be enabled.
+
+Fallback rules:
+
+- explicit policy only;
+- never silent;
+- same protected browser interface;
+- same fail-closed proxy path;
+- same origin/navigation restrictions;
+- separate compatibility telemetry;
+- Servo remains default.
+
+Exit criteria:
+
+- the actual documents application passes the Servo REQUIRED capability suite;
+- performance baseline is accepted;
+- any remaining incompatibilities have explicit disposition.
+
+---
+
+# Phase 3 — Transport provider SPI and supervision
+
+Goal: make network protocol implementation replaceable and independent of Servo.
+
+## 3.1 Provider contract
 
 Implement a Rust-side abstraction similar to:
 
@@ -138,7 +274,9 @@ pub trait TransportProvider {
 }
 ```
 
-## 2.2 Sidecar supervision
+Servo receives only the local protected proxy endpoint. It must not know whether the provider is AWG, Xray or another implementation.
+
+## 3.2 Sidecar supervision
 
 Implement:
 
@@ -152,7 +290,7 @@ Implement:
 - graceful shutdown;
 - stdout/stderr redaction strategy.
 
-## 2.3 Health model
+## 3.3 Health model
 
 Health is layered:
 
@@ -165,12 +303,12 @@ Health is layered:
 
 Exit criteria:
 
-- provider process can be killed/restarted without browser escape to direct Internet;
+- provider process can be killed/restarted without Servo escaping to direct Internet;
 - provider API is protocol-agnostic.
 
 ---
 
-# Phase 3 — Primary transport spike: Outline SDK + AmneziaWG
+# Phase 4 — Primary transport spike: Outline SDK + AmneziaWG
 
 Goal: validate the preferred app-local resilient path.
 
@@ -200,11 +338,11 @@ Required experiments:
 
 Decision gate:
 
-Adopt as primary only if it meets fail-closed, stability, packaging and recovery requirements. Otherwise retain the provider interface and choose another primary without changing browser code.
+Adopt as primary only if it meets fail-closed, stability, packaging and recovery requirements. Otherwise retain the provider interface and choose another primary without changing Servo/browser code.
 
 ---
 
-# Phase 4 — Independent fallback transport
+# Phase 5 — Independent fallback transport
 
 Goal: eliminate single-protocol/single-implementation dependency.
 
@@ -238,15 +376,16 @@ Add:
 Exit criteria:
 
 - simulated complete primary transport failure automatically recovers through fallback;
+- Servo remains attached only to the WebGate local proxy during provider changes;
 - user does not need to select a VPN profile manually.
 
 ---
 
-# Phase 5 — Signed bootstrap and device identity
+# Phase 6 — Signed bootstrap and device identity
 
 Goal: replace hand-managed VPN configs with safe one-time enrollment.
 
-## 5.1 `.webgate` bootstrap schema
+## 6.1 `.webgate` bootstrap schema
 
 Define canonical signed payload containing only:
 
@@ -263,7 +402,7 @@ Must not contain:
 - SecureAcces session token;
 - reusable permanent VPN private key.
 
-## 5.2 Device key
+## 6.2 Device key
 
 On first activation:
 
@@ -272,7 +411,7 @@ On first activation:
 - protect private key with Windows DPAPI;
 - erase transient plaintext secret buffers where practical.
 
-## 5.3 Policy verification
+## 6.3 Policy verification
 
 Implement:
 
@@ -291,11 +430,11 @@ Exit criteria:
 
 ---
 
-# Phase 6 — WebGate control API + SecureAcces integration
+# Phase 7 — WebGate control API + SecureAcces integration
 
 Goal: attach the client to the existing authorization system without duplicating it.
 
-## 6.1 Go control API
+## 7.1 Go control API
 
 Suggested surface:
 
@@ -310,7 +449,7 @@ GET  /v1/policy
 GET  /v1/transport/endpoints
 ```
 
-## 6.2 SecureAcces v1 integration
+## 7.2 SecureAcces v1 integration
 
 Use existing:
 
@@ -325,7 +464,7 @@ Use existing:
 
 Use the WebGate device public-key fingerprint as `deviceID` for current session visibility/audit, while keeping actual device proof in WebGate's device registry.
 
-## 6.3 Resource resolution
+## 7.3 Resource resolution
 
 For every document request:
 
@@ -337,7 +476,7 @@ For every document request:
 
 The client never decides its own tenant/workspace scope.
 
-## 6.4 Device registry
+## 7.4 Device registry
 
 Add server-side device domain with:
 
@@ -356,11 +495,11 @@ Exit criteria:
 
 ---
 
-# Phase 7 — Relay/origin high availability
+# Phase 8 — Relay/origin high availability
 
 Goal: make the lack of a static origin IP irrelevant.
 
-## 7.1 Two independent relays
+## 8.1 Two independent relays
 
 Provision Relay A/B across different meaningful failure domains:
 
@@ -369,7 +508,7 @@ Provision Relay A/B across different meaningful failure domains:
 - independent credentials;
 - reproducible deployment.
 
-## 7.2 Origin server
+## 8.2 Origin server
 
 Origin in Russia:
 
@@ -380,7 +519,7 @@ Origin in Russia:
 - watchdog/reconnect service;
 - local reverse proxy only on trusted/private path.
 
-## 7.3 Origin resilience
+## 8.3 Origin resilience
 
 Test:
 
@@ -398,7 +537,7 @@ Exit criteria:
 
 ---
 
-# Phase 8 — Deep links and Telegram UX
+# Phase 9 — Deep links and Telegram UX
 
 Goal: one-click user workflow.
 
@@ -429,20 +568,21 @@ Requirements:
 Exit criteria:
 
 ```text
-Telegram → click → existing/new WebGate → protected document
+Telegram → click → existing/new WebGate → Servo → protected document
 ```
 
 with no manual VPN action.
 
 ---
 
-# Phase 9 — Production hardening
+# Phase 10 — Production hardening
 
 ## Client security
 
-- release devtools disabled;
-- Tauri capability minimization;
-- no arbitrary native IPC from page JS;
+- Servo release/LTS pinning;
+- Servo compatibility and security regression suite;
+- release debugging/devtools disabled or gated;
+- no arbitrary native IPC from page JavaScript;
 - CSP/hardened embedded content behavior;
 - secure local file permissions;
 - DPAPI secret store;
@@ -471,7 +611,9 @@ Rust:
 - `cargo nextest`;
 - `cargo fuzz`;
 - `clippy`;
-- SBOM.
+- SBOM;
+- pinned Servo dependency graph;
+- Servo upgrade diff/review policy.
 
 Go:
 
@@ -483,27 +625,41 @@ Go:
 
 All releases:
 
-- reproducible-ish documented build environment;
+- documented/reproducible build environment where practical;
 - signed release artifacts;
 - dependency/license inventory;
 - sidecar hashes in signed manifest.
 
 ---
 
-# Phase 10 — Adversarial and resilience validation
+# Phase 11 — Adversarial and resilience validation
 
 Mandatory test families:
 
-## Network escape
+## Browser/network escape
 
+- HTTP/HTTPS proxy bypass;
 - DNS leak;
-- proxy bypass;
 - redirect bypass;
 - WebSocket/SSE/subresource behavior;
 - direct IP origin access;
 - IPv4/IPv6 differences;
-- PAC/system proxy interactions;
-- local malicious process probing proxy port.
+- environment/system proxy interactions;
+- local malicious process probing proxy port;
+- Servo crash/restart;
+- unsupported feature/navigation failure;
+- attempted silent external-browser escape.
+
+## Servo compatibility/regression
+
+- required Web API inventory;
+- visual regression;
+- long-document rendering;
+- Cyrillic/IME;
+- auth/session cookies;
+- storage APIs used by the site;
+- downloads/printing only if product requirements enable them;
+- upgrade from pinned/LTS Servo version.
 
 ## Parser/config
 
@@ -545,45 +701,53 @@ No test may produce protected content through an unauthorized or direct network 
 
 # Milestones
 
-## M1 — Browser capsule
+## M1 — Servo browser capsule
 
-Tauri/WebView2 + restricted proxy + provable fail-closed behavior.
+Servo embedding + restricted proxy + provable fail-closed behavior.
 
-## M2 — Real resilient transport
+## M2 — Servo compatibility/performance qualification
 
-Primary provider running through the same browser proxy abstraction.
+Actual documents site passes required capability, visual and performance gates.
 
-## M3 — Dual-provider failover
+## M3 — Real resilient transport
+
+Primary provider running through the same browser/proxy abstraction.
+
+## M4 — Dual-provider failover
 
 Automatic primary ↔ independent fallback with two relays.
 
-## M4 — Trusted device onboarding
+## M5 — Trusted device onboarding
 
 Signed `.webgate` bootstrap + DPAPI device key + remote signed policy.
 
-## M5 — SecureAcces-backed access
+## M6 — SecureAcces-backed access
 
 Server authentication, membership/resource authorization, session/device revocation.
 
-## M6 — One-click Telegram workflow
+## M7 — One-click Telegram workflow
 
-Trusted link opens the correct document in WebGate without manual VPN interaction.
+Trusted link opens the correct document in Servo/WebGate without manual VPN interaction.
 
-## M7 — Production release candidate
+## M8 — Production release candidate
 
-Signed installer/updater, chaos/security suite, tested backup/restore and deployment runbook.
+Pinned Servo/LTS, signed installer/updater, chaos/security suite, tested backup/restore and deployment runbook.
 
 ---
 
 # Immediate next implementation slice
 
-The highest-value next step is **M1 only**:
+The highest-value next step is **M1 — Servo browser capsule**:
 
-1. scaffold Tauri 2/Rust workspace;
-2. create restricted loopback mock proxy;
-3. bind WebView2 to it with per-WebView proxy configuration;
-4. implement allowlisted navigation and external-browser escape handling;
-5. build an automated negative test proving there is no direct fallback;
-6. package a Windows test build.
+1. scaffold the Rust workspace;
+2. pin a Servo release/LTS candidate;
+3. build a minimal native Servo embedding shell;
+4. integrate `Servo`/`WebView`, `RenderingContext`, event-loop wake/spin and input handling;
+5. create the restricted loopback mock proxy;
+6. force Servo protected HTTP/HTTPS traffic through that proxy;
+7. implement allowlisted navigation and explicit external-browser handling;
+8. build an automated negative test proving there is no direct fallback;
+9. add the first required-feature compatibility tests for the real documents site;
+10. package a Windows test build.
 
-Do not start with AmneziaWG/Xray integration before M1 passes. If application-scoped fail-closed routing is not proven first, every later transport feature rests on an unsafe foundation.
+Do not start with AmneziaWG/Xray integration before M1 passes. If Servo cannot be proven to obey application-scoped fail-closed networking first, every later transport feature rests on an unsafe foundation.
