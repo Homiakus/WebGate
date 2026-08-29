@@ -18,20 +18,21 @@ redundant public relay/VPS layer
 private origin server
 ```
 
-The operating-system network route must remain untouched. Only traffic created by the embedded WebGate browser is allowed into the protected transport.
+The operating-system default route must remain untouched in normal mode. Only traffic created by the embedded WebGate browser is allowed into the protected transport.
 
 ## Project goals
 
 1. One-click access to a private documentation site for a small set of trusted users.
 2. No requirement for a static public IP on the origin server.
-3. No system-wide VPN and no accidental routing of unrelated applications.
+3. No system-wide VPN in normal mode and no accidental routing of unrelated applications.
 4. Fail-closed behavior: if the secure transport is unavailable, the browser must not fall back to direct Internet access.
 5. Multiple independent paths/transports for resilience against VPS, provider, UDP, DNS, routing and DPI failures.
 6. Per-user/per-device configuration and revocation.
 7. Signed configuration and signed application updates.
 8. Compatibility with [`Homiakus/SecureAcces`](https://github.com/Homiakus/SecureAcces) as the server-side authentication/authorization control plane.
-9. Windows-first implementation with an architecture that can later support Linux/macOS.
+9. Shared security core across Windows, Android, Linux and macOS.
 10. A Rust-first protected-browser path built around Servo.
+11. Android as a first-class Tier-1 target rather than a late desktop port.
 
 ## Current architecture decision
 
@@ -39,40 +40,89 @@ Research snapshot: **2026-08-29**.
 
 The canonical architecture is:
 
-- **Primary browser engine:** **Servo embedded directly as a Rust library**.
-- **Browser shell:** thin native Rust shell around Servo's `Servo`/`WebView` embedding APIs and a WebGate-owned rendering/event-loop integration.
-- **Compatibility fallback:** Microsoft WebView2 may exist behind an optional adapter for explicit policy-controlled compatibility cases, but it is not the default engine.
-- **Browser isolation:** protected network access is forced through a WebGate-owned app-local HTTP/HTTPS proxy; no system TUN is required for the default mode.
-- **Local proxy:** random loopback port, destination allowlist, fail-closed; it is not a general-purpose proxy.
-- **Primary resilient transport candidate:** a small Go `webgate-transport` side service built around Outline SDK and AmneziaWG v3 integration.
-- **Independent fallback:** Xray-core with VLESS/REALITY/XHTTP-class transport exposed only through a local SOCKS/HTTP proxy.
-- **Alternative universal transport engine:** sing-box is technically strong, but its GPLv3 distribution implications require an explicit product/licensing decision before it becomes the default bundled engine.
-- **Secrets:** OS-native protected storage (Windows DPAPI first; keyring abstraction for future cross-platform support).
-- **Config:** signed enrollment bundle; private keys are generated on the device and are never distributed in plaintext configuration files.
+- **Primary browser engine:** **Servo embedded as the canonical browser engine**.
+- **Shared core:** Rust for policy, browser/transport orchestration, deep links, signed configuration, device protocol, health state and SecureAcces client integration.
+- **Platform shells:** narrow Windows / Android / Linux / macOS adapters.
+- **Compatibility browser:** a platform browser adapter may exist only as explicit policy-controlled fallback; there is no silent engine switch.
+- **Browser isolation:** protected network access is forced through a WebGate-owned app-local HTTP/HTTPS proxy; no system TUN is required for normal mode.
+- **Local proxy:** random loopback port, destination allowlist, always fail-closed; it is not a general-purpose proxy.
+- **Primary resilient transport candidate:** Outline SDK / MobileProxy plus AmneziaWG-class transport where qualified.
+- **Independent fallback:** Xray-class transport through the same browser-facing local proxy contract.
+- **Transport runtime:** protocol/provider is independent from execution model (`Sidecar`, `InProcess`, `PlatformVpnService`).
+- **Android normal mode:** Servo AAR → local HTTP(S) proxy → Outline MobileProxy/generated mobile library. The rest of the phone is untouched.
+- **Android compatibility VPN:** `VpnService` restricted to the WebGate package only, used only when TUN/IP semantics are required.
+- **Device identity:** hardware-backed ES256/P-256 preferred; policy/update signing remains separate and may use Ed25519.
+- **Secrets:** OS-native protected storage and hardware key providers where available.
+- **Config:** signed enrollment bundle; private device keys are generated locally and never distributed in plaintext configuration files.
 - **Authorization:** SecureAcces remains server-side. WebGate is a secure browser/network client, not a replacement authorization database.
 
-The authoritative browser decision is recorded in [`docs/architecture/ADR-0001-BROWSER-ENGINE.md`](docs/architecture/ADR-0001-BROWSER-ENGINE.md).
+Authoritative decisions:
+
+- [`ADR-0001-BROWSER-ENGINE.md`](docs/architecture/ADR-0001-BROWSER-ENGINE.md) — Servo primary browser.
+- [`ADR-0002-CROSS-PLATFORM-RUNTIME.md`](docs/architecture/ADR-0002-CROSS-PLATFORM-RUNTIME.md) — cross-platform/runtime model.
+
+## Platform tiers
+
+```text
+Tier 1  Windows x86_64
+Tier 1  Android arm64 after acceptance gate
+Tier 2  Linux x86_64/aarch64
+Tier 2  macOS arm64/x86_64
+Tier 3  OpenHarmony research
+Deferred iOS
+```
+
+Servo upstream currently supports Windows, macOS, Linux, Android and OpenHarmony. WebGate nevertheless qualifies a pinned Servo LTS release itself: upstream platform availability does not automatically mean WebGate production support.
+
+## Android architecture
+
+Android deliberately follows the same security model without pretending to be desktop:
+
+```text
+Telegram
+   ↓
+verified HTTPS App Link
+   ↓
+WebGate Android shell
+   ↓
+shared Rust security core
+   ↓
+Servo AAR
+   ↓
+127.0.0.1:<ephemeral HTTP(S) proxy>
+   ↓
+Outline MobileProxy / transport provider
+   ↓
+Relay A/B
+   ↓
+private origin + SecureAcces
+```
+
+The Android shell should remain intentionally thin and own only OS-native concerns such as Activity lifecycle, verified App Links, Keystore, permission prompts, notifications/foreground services and optional `VpnService` fallback.
+
+Normal Android mode does **not** require VPN permission and does not alter the networking of Chrome, Telegram or other applications.
 
 ## Why Servo
 
 Servo aligns with WebGate's product model better than wrapping a general-purpose system browser:
 
-- browser engine and application control plane remain Rust-first;
-- Servo is designed for embedding and exposes `Servo`, `WebView`, delegate and rendering-context APIs;
-- Servo supports Windows and has a cross-platform direction;
-- HTTP and HTTPS proxy support can be used as part of WebGate's app-local networking boundary;
-- its modular design gives WebGate a path toward a purpose-built protected browser rather than a Chromium distribution.
+- Rust-first engine and embedding API;
+- `Servo`, `WebView`, delegate and rendering-context APIs;
+- Windows/Linux/macOS/Android direction from the same engine family;
+- HTTP and HTTPS proxy support fits WebGate's app-local networking boundary;
+- an LTS line exists for embedders;
+- modular design enables a purpose-built protected browser.
 
-Servo does not yet match Chromium for arbitrary-site compatibility. WebGate therefore treats browser compatibility as a tested contract for the documentation site. Production releases must pass a site capability suite, visual regressions, network-escape tests and performance gates against the pinned Servo release/LTS line.
+Servo is still pre-1.0 and does not yet match Chromium for arbitrary-site compatibility. WebGate therefore treats browser compatibility as a tested contract for the documentation site. Production releases must pass a site capability suite, visual regressions, network-escape tests and performance gates against a pinned Servo LTS patch release.
 
 ## Why app-local transport instead of a normal VPN
 
-A traditional VPN changes routing at the OS level. WebGate instead forces its embedded browser through a protected application-local network path:
+A traditional VPN changes routing at the OS level. WebGate instead forces its browser through a protected application-local path:
 
 ```text
 Chrome ───────────────→ normal Internet
 Telegram ─────────────→ normal Internet
-Windows Update ───────→ normal Internet
+system applications ─→ normal Internet
 
 WebGate / Servo
       ↓
@@ -85,7 +135,7 @@ secure transport
 private infrastructure
 ```
 
-This sharply reduces accidental blast radius, avoids conflicts with other VPN clients, simplifies the kill switch, and makes the user experience essentially "open link → document".
+This reduces blast radius, avoids many conflicts with other VPN clients, simplifies the kill switch, and gives the user an "open link → document" workflow.
 
 ## Browser safety invariant
 
@@ -102,7 +152,29 @@ WebGate local proxy
   +-- transport unhealthy --> DENY
 ```
 
+The local proxy should remain configured for the lifetime of the browser. During transport failure it transitions to a safe deny/offline state rather than being removed or replaced with direct networking.
+
 A Servo crash, unsupported feature, DNS error, proxy failure or transport failure must not trigger a direct-network fallback or silent engine switch.
+
+## Device identity
+
+Device identity and policy/update signing are separate key purposes.
+
+Preferred model:
+
+```text
+Device proof             ES256 / ECDSA P-256
+Policy/update signatures Ed25519 or separately versioned signing profile
+```
+
+P-256 allows WebGate to use hardware-backed native stores where available:
+
+- Windows TPM through CNG Platform Crypto Provider;
+- Android Keystore / TEE / StrongBox;
+- macOS Secure Enclave;
+- Linux TPM2 where available, with controlled software/keyring fallback.
+
+The server records the device key algorithm and security level so access policy can distinguish hardware-backed and software-backed devices when needed.
 
 ## SecureAcces role
 
@@ -119,9 +191,9 @@ SecureAcces already provides the correct server-side concepts for WebGate:
 - Telegram adapters;
 - fail-closed authorization and revocation.
 
-WebGate will integrate with those contracts rather than duplicating them.
+WebGate integrates with those contracts rather than duplicating them.
 
-A key compatibility finding is that SecureAcces `Session.DeviceID` is currently an audit/session attribute rather than a cryptographic device credential. WebGate can be fully compatible today by using normal SecureAcces sessions and storing their token in OS-protected storage. A later hardening phase should introduce a first-class device public-key binding/provider so possession of the device key can be proven during session issuance/refresh.
+`SecureAcces.Session.DeviceID` is currently a session/audit attribute rather than cryptographic device proof. WebGate therefore keeps device proof in a dedicated device registry and uses the fingerprint as the SecureAcces `deviceID` for visibility. SecureAcces remains authoritative for account/session/resource authorization.
 
 ## Repository map
 
@@ -132,15 +204,19 @@ WebGate/
 └── docs/
     ├── architecture/
     │   ├── ADR-0001-BROWSER-ENGINE.md
+    │   ├── ADR-0002-CROSS-PLATFORM-RUNTIME.md
     │   └── TARGET_ARCHITECTURE.md
+    ├── implementation/
+    │   └── CROSS_PLATFORM_RESILIENCE_PLAN.md
     ├── integration/
     │   └── SECUREACCESS.md
     └── research/
         ├── BROWSER_ENGINE_AUDIT.md
+        ├── RESILIENCE_CROSS_PLATFORM_AUDIT.md
         └── TOOLING_AUDIT.md
 ```
 
-The repository starts documentation-first. Code should only be committed after the transport, trust-boundary, browser-engine and configuration contracts are explicit enough to test.
+The repository remains documentation-first until the transport, trust-boundary, browser, platform and configuration contracts are explicit enough to test.
 
 ## Non-negotiable security properties
 
@@ -148,28 +224,30 @@ The repository starts documentation-first. Code should only be committed after t
 - fail closed on transport failure;
 - no automatic direct-connect fallback from the protected browser;
 - no silent browser-engine fallback;
+- normal mode does not alter unrelated OS/app networking;
 - no secret VPN/private key inside a shareable static config;
 - one device key per installation;
 - all enrollment bundles and remote policies are signed;
-- remote policy cannot weaken local hard security invariants;
+- remote policy cannot weaken compiled hard security invariants;
 - protected browser has an explicit origin allowlist;
-- external navigation goes to the system browser only by explicit policy, never through the protected transport;
-- debug/devtools are disabled or tightly gated in production;
-- local transport IPC is authenticated/restricted;
-- local proxy accepts only WebGate-approved target origins;
-- SecureAcces authorizes every protected resource request server-side;
-- links themselves are identifiers, not bearer credentials;
+- external navigation goes to the system browser only by explicit policy;
+- no generic page-to-native privileged bridge;
+- local transport IPC/proxy endpoints are restricted;
+- SecureAcces authorizes protected resources server-side;
+- links are identifiers, not bearer credentials;
 - secrets/tokens are redacted from logs and crash reports;
-- updates are cryptographically signed and rollback-aware.
+- updates are cryptographically signed and rollback-aware;
+- restored application/browser state is never treated as authorization proof.
 
-## Research sources
-
-Primary sources and comparative decisions are tracked in:
+## Research and plans
 
 - [`docs/research/TOOLING_AUDIT.md`](docs/research/TOOLING_AUDIT.md)
 - [`docs/research/BROWSER_ENGINE_AUDIT.md`](docs/research/BROWSER_ENGINE_AUDIT.md)
+- [`docs/research/RESILIENCE_CROSS_PLATFORM_AUDIT.md`](docs/research/RESILIENCE_CROSS_PLATFORM_AUDIT.md)
+- [`docs/implementation/CROSS_PLATFORM_RESILIENCE_PLAN.md`](docs/implementation/CROSS_PLATFORM_RESILIENCE_PLAN.md)
 - [`docs/architecture/ADR-0001-BROWSER-ENGINE.md`](docs/architecture/ADR-0001-BROWSER-ENGINE.md)
+- [`docs/architecture/ADR-0002-CROSS-PLATFORM-RUNTIME.md`](docs/architecture/ADR-0002-CROSS-PLATFORM-RUNTIME.md)
 
 ## Status
 
-**Phase 0 — architecture/tooling research in progress. Servo is fixed as the primary browser-engine baseline.**
+**Phase 0 — architecture/tooling research in progress. Servo is fixed as the primary engine; Windows and Android are the first two architecture-validation targets.**
