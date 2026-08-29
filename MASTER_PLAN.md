@@ -32,7 +32,7 @@ SecureAcces authorization
 
 # 2. Current State
 
-The repository has crossed from documentation-only research into the first executable foundation. The portable Rust workspace contains separate core, browser, transport, platform and app crates. No Servo runtime or real VPN implementation is present yet.
+The repository now has a compiling portable Rust foundation with separate core, browser, transport, platform and app crates. CI verifies the exact commit before `main` advances. No Servo runtime, real VPN provider or platform secret-store implementation is present yet.
 
 Existing decisions:
 
@@ -71,29 +71,31 @@ Telegram / HTTPS / deep link
                     SecureAcces
 ```
 
-Dependency rule: app/adapters may depend inward on portable contracts; `webgate-core` must not depend on OS/browser/VPN implementations.
+Dependency rule: app/adapters may depend inward on portable contracts; `webgate-core` must not depend on OS/browser/VPN implementations. `scripts/check_architecture.py` enforces the current internal dependency graph in CI.
 
 # 4. Baseline
 
 Initial pre-code baseline was N/A for build/tests because no Cargo workspace existed.
 
-T-002 establishes the first executable baseline:
+Current executable baseline:
 
-| Check | Baseline after T-002 |
+| Check | Result / policy |
 |---|---|
 | Cargo workspace | present |
-| external runtime dependencies | zero |
-| unit tests | core/platform/browser/transport smoke + endpoint invariant tests |
-| `cargo fmt --check` | required by CI |
-| `cargo check --workspace --all-targets` | required by CI |
-| `cargo test --workspace` | required by CI |
-| `cargo clippy --workspace --all-targets -- -D warnings` | required by CI |
-| security scan | planned T-003 |
-| mutation score | N/A until critical pure policy exists |
+| committed `Cargo.lock` | required |
+| external runtime dependencies | zero before Servo |
+| architecture dependency check | required |
+| `cargo fmt --check` | required |
+| `cargo check --workspace --all-targets --locked` | required |
+| `cargo test --workspace --locked` | required |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | required |
+| cargo-deny advisories/licenses/bans/sources | required |
+| GitHub Actions third-party refs | commit-SHA pinned |
+| mutation score | N/A until critical policy/state logic exists |
 | coverage | not yet established |
 | benchmarks | N/A before Servo/proxy |
 
-Environment note: the assistant execution container has neither a Rust toolchain nor outbound GitHub DNS. Exact-commit verification for T-002 is therefore performed in GitHub Actions on an isolated work branch before `main` is advanced.
+Environment note: the assistant execution container has neither a Rust toolchain nor outbound GitHub DNS. Candidate changes are therefore assembled as a single Git commit on an isolated work branch, GitHub Actions verifies that exact SHA, and `main` advances only after green verification.
 
 # 5. System Invariants
 
@@ -125,6 +127,10 @@ I-013. Production requires at least two materially independent network failure d
 
 I-014. A `LocalProxyEndpoint` exposed to the browser must be loopback-only and refer to an already-bound non-zero port.
 
+I-015. Internal crate dependency direction is machine-enforced; adding or changing a crate boundary requires a deliberate architecture-policy change.
+
+I-016. CI actions with code execution are pinned to immutable commit SHAs.
+
 # 6. Findings Registry
 
 ## F-001 — Repository had no executable baseline
@@ -132,34 +138,24 @@ I-014. A `LocalProxyEndpoint` exposed to the browser must be loopback-only and r
 **Status:** Resolved  
 **Category:** Delivery / Architecture  
 **Severity:** High  
-**Confidence:** Confirmed
-
-**Evidence:** initial `main` had documentation only.  
-**Root cause:** project intentionally began documentation-first.  
-**Impact:** no code-level invariant could be verified.  
-**Resolution:** T-002 creates the portable workspace and executable quality baseline.  
-**Affected tasks:** T-002, T-003.
+**Confidence:** Confirmed  
+**Resolution:** T-002 created the portable workspace and build/test/lint baseline.
 
 ## F-002 — Previous plan was roadmap-shaped, not execution-shaped
 
 **Status:** Resolved  
 **Category:** Process / Architecture  
 **Severity:** High  
-**Confidence:** Confirmed
-
-**Resolution:** T-001 replaced it with this Findings/Tasks/DAG/Iteration model.
+**Confidence:** Confirmed  
+**Resolution:** T-001 established this Findings/Tasks/DAG/Iteration model.
 
 ## F-003 — Desktop-only assumptions remained in device/runtime design
 
 **Status:** Planned  
 **Category:** Cross-platform / Architecture  
 **Severity:** High  
-**Confidence:** Confirmed
-
-**Evidence:** earlier design named DPAPI and supervised desktop sidecars directly in shared milestones.  
-**Root cause:** Windows-first research preceded Android-first-class requirement.  
+**Confidence:** Confirmed  
 **Impact:** Android could require core rewrites.  
-**Affected invariants:** I-011, I-012.  
 **Affected tasks:** T-006, T-009, T-010.  
 **Direction:** shared capabilities only; OS implementations stay in adapters.
 
@@ -168,9 +164,7 @@ I-014. A `LocalProxyEndpoint` exposed to the browser must be loopback-only and r
 **Status:** Planned  
 **Category:** Security / Cross-platform  
 **Severity:** High  
-**Confidence:** Strong
-
-**Impact:** non-exportable device identity may be unavailable on some OS/hardware combinations.  
+**Confidence:** Strong  
 **Affected tasks:** T-009, T-010.  
 **Direction:** algorithm-agile `DeviceSigner`; prefer platform hardware-backed P-256/ES256 where appropriate; retain project-controlled Ed25519 for policy/update signatures.
 
@@ -179,53 +173,60 @@ I-014. A `LocalProxyEndpoint` exposed to the browser must be loopback-only and r
 **Status:** Planned  
 **Category:** Browser / Security  
 **Severity:** High  
-**Confidence:** Confirmed
-
-**Evidence:** Servo is pre-1.0 with monthly releases and an LTS path; upstream embedding and web compatibility continue to evolve.  
+**Confidence:** Confirmed  
 **Affected tasks:** T-004, T-005, T-014.  
 **Direction:** exact pin, site compatibility suite, security review and explicit upgrade gate.
 
 ## F-006 — No automated architecture enforcement existed
 
-**Status:** Planned  
+**Status:** Resolved  
 **Category:** Architecture / Testing  
 **Severity:** Medium  
-**Confidence:** Confirmed
-
-**Resolution progress:** T-002 creates crate boundaries and forbids unsafe code workspace-wide. T-003 will add dependency/security policy and stronger architecture checks.
+**Confidence:** Confirmed  
+**Resolution:** T-002 created crate boundaries; T-003 added machine-enforced dependency policy and immutable CI dependency policy.
 
 ## F-007 — Local verification environment lacks Rust and outbound GitHub access
 
 **Status:** Resolved  
 **Category:** Tooling / Environment  
 **Severity:** Medium  
+**Confidence:** Confirmed  
+**Resolution:** isolated work-branch exact-commit GitHub Actions verification before a non-force fast-forward to main.
+
+## F-008 — `main` is not repository-enforced as a protected branch
+
+**Status:** Planned / external capability limited  
+**Category:** CI/CD / Governance  
+**Severity:** Medium  
 **Confidence:** Confirmed
 
-**Evidence:** `rustc`/`cargo` are absent and direct clone cannot resolve `github.com` in the execution container.  
-**Impact:** local build cannot be the proof gate for repository changes.  
-**Resolution:** candidate changes are assembled as one Git commit on an isolated work branch, GitHub Actions verifies that exact commit, and `main` advances only after green verification. No force push is used.
+**Evidence:** GitHub reports `protected: false` with required status checks disabled.  
+**Impact:** repository settings do not prevent an accidental direct broken push by another actor.  
+**Current mitigation:** autonomous workflow always verifies the exact commit on an isolated branch before advancing main and never force-pushes.  
+**Affected task:** T-017.  
+**Direction:** configure a ruleset/branch protection compatible with the verified-fast-forward workflow when a write-capable repository-settings connector is available.
 
 # 7. Risk Register
 
 | Risk | Probability | Impact | Mitigation |
 |---|---:|---:|---|
-| Servo cannot render a REQUIRED site feature | Medium | High | capability inventory + tests + explicit fallback policy |
+| Servo misses REQUIRED site feature | Medium | High | capability inventory + tests + explicit fallback policy |
 | direct-network escape on proxy failure | Medium | Critical | negative tests first; immutable protected proxy binding |
 | Android lifecycle interrupts transport | High | High | early Android probe + idempotent lifecycle state machine |
-| provider/UDP path blocked | Medium | High | independent fallback transport + two relays |
+| provider/UDP path blocked | Medium | High | independent fallback + two relays |
 | stale Servo pin contains known issue | Medium | High | pin/LTS policy + security upgrade gate |
 | hardware-backed identity differs by OS | High | Medium/High | algorithm-agile DeviceSigner |
-| scope expands into general VPN/browser | Medium | High | destination allowlist + explicit non-goals |
-| authorization is duplicated client-side | Low | High | SecureAcces remains authoritative |
+| dependency/supply-chain drift | Medium | High | lockfile + cargo-deny + immutable action refs |
+| authorization duplicated client-side | Low | High | SecureAcces remains authoritative |
 
 # 8. Pareto Improvements
 
-1. Compiling portable boundaries before large dependencies.
-2. Fail-closed/navigation policy as pure mutation-testable logic.
-3. Servo proxy escape proof before real VPN work.
-4. Android probe before desktop lifecycle patterns harden.
-5. CI/security gates before dependency growth.
-6. Transport diversity only after browser isolation is proven.
+1. Keep portable boundaries compiling before large dependencies.
+2. Encode fail-closed/navigation rules as pure mutation-testable logic.
+3. Prove Servo proxy isolation before real VPN work.
+4. Run Android probe before desktop lifecycle assumptions harden.
+5. Keep dependency/security gates green as Servo expands the graph.
+6. Add transport diversity only after browser isolation is proven.
 
 # 9. Dependency DAG
 
@@ -261,6 +262,8 @@ T-014 compatibility/performance/security qualification
 T-015 packaging/update/deep-link UX
    ↓
 T-016 final adversarial re-audit
+
+T-017 branch/ruleset enforcement is independent and remains BLOCKED on repository-settings write capability.
 ```
 
 # 10. Implementation Phases
@@ -269,7 +272,8 @@ T-016 final adversarial re-audit
 **B — Protected Servo capsule:** T-004..T-007.  
 **C — Portable transport/device boundaries:** T-008..T-010.  
 **D — Authorization and real transport:** T-011..T-013.  
-**E — Qualification/release:** T-014..T-016.
+**E — Qualification/release:** T-014..T-016.  
+**Governance parallel:** T-017.
 
 # 11. Atomic Tasks
 
@@ -278,85 +282,68 @@ T-016 final adversarial re-audit
 **Status:** DONE  
 **Priority:** P0  
 **Type:** IMPROVE  
-**Leverage:** HIGH  
-**Acceptance:** required plan structure, first findings, DAG and iteration log established.
+**Leverage:** HIGH
 
 ## T-002 — Scaffold the portable Rust workspace and enforce layer ownership
 
 **Status:** DONE  
 **Priority:** P0  
 **Type:** IMPROVE  
-**Leverage:** HIGH
-
-### Problem
-No executable baseline existed and desktop assumptions could enter shared code immediately.
-
-### Evidence
-F-001, F-003, F-006, F-007.
-
-### Goal
-Create a minimal compiling workspace with explicit dependency direction before Servo or real transports.
-
-### Scope
-Root Cargo/toolchain files; `webgate-core`, `webgate-browser`, `webgate-transport`, `webgate-platform`, `webgate-app`; minimal verification workflow needed to prove the exact candidate commit in the available environment.
-
-### Non-goals
-No Servo runtime, real VPN, secret-store implementation, deep-link policy or failover algorithm.
-
-### Implementation
-- stable Rust, edition 2024, MSRV floor compatible with current Servo requirements;
-- workspace-wide `unsafe_code = forbid`;
-- portable core has no OS/browser/VPN dependencies;
-- browser/transport/platform are contracts around the core;
-- app only composes boundaries;
-- local proxy endpoint type accepts only loopback and non-zero bound ports.
-
-### Invariants
-I-002, I-009, I-010, I-011, I-012, I-014.
-
-### Edge cases
-IPv4/IPv6 loopback, non-loopback rejection, zero-port rejection, target-platform selection.
-
-### Tests
-Unit tests for platform identity and proxy endpoint invariants; workspace build/lint/test in CI.
-
-### Mutation tests
-N/A: mutation tooling is deferred until nontrivial policy/state logic exists.
-
-### Acceptance criteria
-`cargo fmt --all -- --check`, `cargo check --workspace --all-targets`, `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings` pass on the exact commit before main advances.
-
-### Dependencies
-T-001.
-
-### Blocks
-T-003 onward.
-
-### Risk
-Low.
-
-### Rollback
-Revert this single scaffold commit.
+**Leverage:** HIGH  
+**Verified:** exact candidate SHA passed format/check/test/clippy before main fast-forward.
 
 ## T-003 — Harden CI, dependency policy and architecture checks
 
-**Status:** READY  
+**Status:** DONE  
 **Priority:** P0  
 **Type:** HARDEN  
 **Leverage:** HIGH
 
-Add locked dependency workflow, `cargo audit`/advisory strategy, `cargo deny` policy, action pinning, cross-target compile strategy where practical and architecture-boundary checks. Establish committed `Cargo.lock` policy for application builds.
+### Problem
+The first CI proved compilation but did not lock the dependency graph, scan advisories/licenses/sources, pin executable Actions to immutable commits or machine-enforce the crate dependency DAG.
 
-**Dependencies:** T-002.
+### Evidence
+F-006 plus initial workflow/tooling review.
+
+### Goal
+Make dependency and architecture drift fail CI before Servo increases the graph dramatically.
+
+### Scope
+`Cargo.lock`, `deny.toml`, `scripts/check_architecture.py`, `.github/workflows/rust-ci.yml`, this plan.
+
+### Non-goals
+No Servo dependency, branch-settings mutation, coverage or mutation tooling yet.
+
+### Implementation
+- commit application workspace lockfile;
+- require `--locked` for metadata/check/test/clippy;
+- pin `actions/checkout` and `cargo-deny-action` to immutable commit SHAs;
+- run cargo-deny advisory/license/ban/source checks;
+- fail on unapproved internal `webgate-*` dependency edges or unreviewed workspace package additions.
+
+### Invariants
+I-009, I-011, I-015, I-016.
+
+### Tests
+Architecture script, locked Cargo verification, full Rust CI and cargo-deny on exact commit.
+
+### Mutation tests
+N/A; script is guardrail tooling, while mutation testing begins with security policy/state logic.
+
+### Acceptance criteria
+Both `verify` and `dependency-policy` jobs pass on the exact commit before main advances.
+
+### Rollback
+Revert the single T-003 commit.
 
 ## T-004 — Pin Servo and build the minimal embedding adapter
 
-**Status:** TODO  
+**Status:** READY  
 **Priority:** P0  
 **Type:** IMPROVE  
 **Leverage:** HIGH
 
-Introduce a reviewed exact Servo release behind `webgate-browser`; no Servo type leaks into core. Record build/platform prerequisites and upgrade policy.
+Introduce a reviewed exact Servo release behind `webgate-browser`; no Servo type leaks into core. Record build/platform prerequisites and upgrade policy. Start from the latest reviewed security-bearing release that can pass the build gate; do not track `main`.
 
 **Dependencies:** T-003.
 
@@ -389,9 +376,7 @@ Prove shared core has no desktop-only assumptions; validate Servo Android embedd
 **Type:** HARDEN  
 **Leverage:** HIGH
 
-Property/fuzz/mutation tests for URL schemes, IDN/Unicode, origin matching, redirects, opaque resource IDs and external-browser policy.
-
-**Dependencies:** T-002; integrates with T-005.
+Property/fuzz/mutation tests for schemes, IDN/Unicode, origin matching, redirects, opaque resource IDs and external-browser policy.
 
 ## T-008 — Implement transport SPI and deterministic health/failover state machine
 
@@ -402,8 +387,6 @@ Property/fuzz/mutation tests for URL schemes, IDN/Unicode, origin matching, redi
 
 State/property/mutation tests across timing, failure, retry, suspend/resume and network changes.
 
-**Dependencies:** T-005, T-006, T-007.
-
 ## T-009 — Introduce algorithm-agile device identity
 
 **Status:** TODO  
@@ -411,9 +394,7 @@ State/property/mutation tests across timing, failure, retry, suspend/resume and 
 **Type:** HARDEN  
 **Leverage:** HIGH
 
-Define DeviceSigner/public-key proof contracts. Prefer hardware-backed P-256/ES256 where platform support allows; algorithm identifiers are explicit.
-
-**Dependencies:** T-002.
+Define DeviceSigner/public-key proof contracts; prefer hardware-backed P-256/ES256 where available.
 
 ## T-010 — Implement platform secret/device adapters
 
@@ -424,8 +405,6 @@ Define DeviceSigner/public-key proof contracts. Prefer hardware-backed P-256/ES2
 
 Windows DPAPI/CNG; Android Keystore; macOS Keychain/Secure Enclave where applicable; Linux secure-storage strategy with explicit fallback policy.
 
-**Dependencies:** T-006, T-009.
-
 ## T-011 — Integrate the control plane with SecureAcces
 
 **Status:** TODO  
@@ -435,8 +414,6 @@ Windows DPAPI/CNG; Android Keystore; macOS Keychain/Secure Enclave where applica
 
 Use SecureAcces sessions/resource resolution/authorization/revocation; never reimplement tenant authorization in WebGate.
 
-**Dependencies:** T-009, T-010.
-
 ## T-012 — Implement and qualify the primary resilient transport
 
 **Status:** TODO  
@@ -444,9 +421,7 @@ Use SecureAcces sessions/resource resolution/authorization/revocation; never rei
 **Type:** IMPROVE  
 **Leverage:** HIGH
 
-Candidate Outline SDK + AmneziaWG behind restricted proxy/dialer. Desktop may use supervised process; Android must use a mobile-compatible/in-process adapter rather than assuming child-process semantics.
-
-**Dependencies:** T-008.
+Candidate Outline SDK + AmneziaWG behind restricted proxy/dialer; Android uses a mobile-compatible/in-process adapter rather than desktop child-process assumptions.
 
 ## T-013 — Add independent fallback transport and dual-relay failover
 
@@ -455,9 +430,7 @@ Candidate Outline SDK + AmneziaWG behind restricted proxy/dialer. Desktop may us
 **Type:** HARDEN  
 **Leverage:** HIGH
 
-Fallback must differ materially in protocol/implementation/failure mode from primary. Validate relay/provider diversity and recovery hysteresis.
-
-**Dependencies:** T-012.
+Fallback differs materially in protocol/implementation/failure mode from primary; validate relay/provider diversity and hysteresis.
 
 ## T-014 — Qualify Servo/site compatibility, security and performance
 
@@ -466,9 +439,7 @@ Fallback must differ materially in protocol/implementation/failure mode from pri
 **Type:** HARDEN  
 **Leverage:** HIGH
 
-REQUIRED/OPTIONAL/NOT_USED capability inventory, visual regressions, actual workload performance, pinned Servo upgrade gate and known-security review.
-
-**Dependencies:** T-004, T-005.
+REQUIRED/OPTIONAL/NOT_USED capability inventory, visual regressions, real workload performance, pinned Servo upgrade gate and known-security review.
 
 ## T-015 — Implement signed packaging, updates and one-click link UX
 
@@ -479,8 +450,6 @@ REQUIRED/OPTIONAL/NOT_USED capability inventory, visual regressions, actual work
 
 Cross-platform signed artifacts, rollback-aware update manifest, deep-link registration and Telegram launcher flow.
 
-**Dependencies:** T-010, T-011, T-013, T-014.
-
 ## T-016 — Perform full adversarial re-audit and debt deletion pass
 
 **Status:** TODO  
@@ -488,62 +457,56 @@ Cross-platform signed artifacts, rollback-aware update manifest, deep-link regis
 **Type:** HARDEN  
 **Leverage:** HIGH
 
-Repeat architecture/correctness/security/concurrency/reliability/API/testing/mutation/performance/CI/dependency audit; delete obsolete paths and feed all findings back into this plan.
+Repeat architecture/correctness/security/concurrency/reliability/API/testing/mutation/performance/CI/dependency audit and delete obsolete paths.
+
+## T-017 — Enforce verified-main policy in repository settings
+
+**Status:** BLOCKED  
+**Priority:** P2  
+**Type:** HARDEN  
+**Leverage:** MEDIUM
+
+Configure branch protection/ruleset compatible with exact-SHA verification and non-force fast-forward. Blocker: current connector exposes protection reads but no protection/ruleset write action. Continue all other tasks.
 
 # 12. Testing Strategy
 
-- pure core unit/property tests first;
-- compile/module-boundary checks;
-- browser adapter integration tests;
-- local-proxy network-escape negative tests;
-- platform and Android lifecycle tests;
-- transport chaos tests;
-- SecureAcces integration tests;
-- end-to-end deep-link → document tests.
-
-Critical model: `input × state × concurrency × timing × failure × permissions × configuration × external state` using boundary partitions, pairwise/high-risk N-wise, fuzzing, property and metamorphic tests.
+Pure core unit/property tests first; compile/module-boundary checks; browser adapter integration; local-proxy network-escape negative tests; platform and Android lifecycle tests; transport chaos; SecureAcces integration; end-to-end deep-link→document. Critical model: `input × state × concurrency × timing × failure × permissions × configuration × external state`.
 
 # 13. Mutation Testing Strategy
 
-Mandatory for URL/origin policy, fail-closed decisions, transport state machine, signed policy validation, device challenge verification and authorization adapters. Initial Rust candidate: `cargo-mutants`. Surviving mutants require observable-contract analysis, not superficial coverage inflation.
+Mandatory for URL/origin policy, fail-closed decisions, transport state machine, signed policy validation, device challenge verification and authorization adapters. Initial Rust candidate: `cargo-mutants`. Surviving mutants require observable-contract analysis.
 
 # 14. Performance Baselines
 
-After Servo/proxy exists measure process→shell, Servo ready, proxy/transport ready, trusted-link→first-paint, warm navigation, idle/active RSS, CPU idle, scroll stability, reconnect time, Android cold/warm start and battery-sensitive reconnect behavior.
+After Servo/proxy exists measure process→shell, Servo ready, proxy/transport ready, link→first-paint, warm navigation, RSS, CPU idle, scroll stability, reconnect time and Android cold/warm start/battery-sensitive reconnect.
 
 # 15. Security Hardening
 
-No reusable private key in bootstrap; signed/versioned policy/update formats; explicit roots/rotation; destination-restricted local proxy; no direct protected-origin fallback; no arbitrary web→native bridge; structured secret redaction; per-device revocation; hardware-backed identity where possible; pinned dependency review/SBOM; server authorization for every protected resource.
+No reusable private key in bootstrap; signed/versioned policy/update formats; explicit roots/rotation; destination-restricted local proxy; no direct fallback; no arbitrary web→native bridge; structured secret redaction; per-device revocation; hardware-backed identity where possible; locked dependency review/SBOM; server authorization for every protected resource.
 
 # 16. Migration Strategy
 
-`characterize → introduce boundary → dual compatibility if required → migrate callers → verify → remove legacy`.
-
-Servo compatibility fallback is explicit only and must use the same protected network policy.
+`characterize → introduce boundary → dual compatibility if required → migrate callers → verify → remove legacy`. Servo compatibility fallback is explicit only and uses the same protected network policy.
 
 # 17. Deferred Work
 
-- iOS until app-store/browser-engine policy and Servo maturity are reevaluated;
-- general-purpose full-device VPN mode;
-- arbitrary general web browsing;
+- iOS pending platform policy/Servo maturity reevaluation;
+- general-purpose full-device VPN;
+- arbitrary general browsing;
 - enterprise fleet/MDM orchestration;
 - distributed authorization infrastructure beyond actual scale needs.
 
 # 18. Rejected Decisions
 
-- system-wide VPN as default;
-- bearer-secret document links;
-- silent WebView2/system-browser fallback;
-- core dependency on DPAPI/Win32;
-- one shared user VPN key/config;
-- authorization inside relay/VPN layer.
+System-wide VPN as default; bearer-secret document links; silent browser fallback; core dependency on DPAPI/Win32; shared user VPN keys; authorization inside relay/VPN layer; mutable/tag-only CI action references after T-003.
 
 # 19. Completed Tasks
 
 - T-001 — execution-grade plan/baseline reconciliation.
-- T-002 — portable executable Rust workspace and first build/test/lint baseline.
-- Research — browser/Servo, SecureAcces integration, resilience/cross-platform/Android.
-- Architecture — browser and cross-platform ADRs plus target topology.
+- T-002 — portable executable Rust workspace.
+- T-003 — locked dependency, immutable CI action and architecture-policy gates.
+- Research — Servo/browser, SecureAcces, resilience/cross-platform/Android.
+- Architecture — browser/cross-platform ADRs and target topology.
 
 # 20. Iteration Log
 
@@ -554,7 +517,6 @@ Servo compatibility fallback is explicit only and must use the same protected ne
 **Unexpected findings:** F-001, F-003, F-004, F-005, F-006  
 **Changes:** Established baseline, findings, risks, DAG, atomic tasks and convergence rules.  
 **Tests:** repository/tree/document inspection.  
-**Plan changes:** Android moved early; device identity algorithm made a future abstraction; CI/portable core promoted.  
 **Commit:** `docs(plan): establish execution-grade living master plan`  
 **Push:** main  
 **Result:** PASS
@@ -564,26 +526,24 @@ Servo compatibility fallback is explicit only and must use the same protected ne
 **Task:** T-002  
 **Findings addressed:** F-001; partial F-006  
 **Unexpected findings:** F-007  
-**Changes:** Added portable Rust workspace, core/browser/transport/platform/app boundaries, loopback-only proxy endpoint invariant, unit tests, workspace lint policy and minimal exact-commit CI verification.  
-**Tests:** `cargo fmt --all -- --check`; `cargo check --workspace --all-targets`; `cargo test --workspace`; `cargo clippy --workspace --all-targets -- -D warnings`. Verification is performed by GitHub Actions on the candidate commit because the execution container lacks Rust.  
-**Plan changes:** CI bootstrap admitted into T-002 as the minimum mechanism required to verify the implementation; deeper CI/security hardening remains T-003.  
+**Changes:** Portable Rust workspace, capability crates, loopback endpoint invariant, unit tests and minimal exact-commit CI.  
+**Tests:** format/check/test/clippy all PASS in GitHub Actions on exact candidate SHA.  
 **Commit:** `refactor(core): scaffold portable Rust boundaries`  
+**Push:** main  
+**Result:** PASS
+
+## Iteration 3
+
+**Task:** T-003  
+**Findings addressed:** F-006  
+**Unexpected findings:** F-008  
+**Changes:** Committed lockfile; added cargo-deny policy; pinned executable Actions by commit SHA; added machine-enforced crate dependency DAG; all build/test/lint operations use the lockfile.  
+**Tests:** architecture checker; locked metadata/check/test/clippy; cargo-deny advisories/licenses/bans/sources on exact candidate SHA.  
+**Plan changes:** added blocked T-017 for repository-level main protection; T-004 becomes next READY task.  
+**Commit:** `ci(security): lock dependencies and architecture gates`  
 **Push:** main after exact-commit CI PASS  
 **Result:** PASS
 
 # 21. Definition of Final Done
 
-- no unresolved Critical/High release findings;
-- all P0/P1 release tasks DONE or evidence-based REJECTED;
-- protected traffic cannot escape to direct networking under tested failures;
-- Servo REQUIRED site capabilities pass supported platforms;
-- Windows and Android runtime paths are proven; Linux/macOS meet declared support gates;
-- device/session revocation works end-to-end with SecureAcces;
-- primary and independent fallback transports survive chaos tests;
-- critical policy/state/parser logic is mutation-resistant;
-- format/build/test/lint/static/security checks pass;
-- performance meets recorded targets without security regression;
-- signed packaging/update flow is verified;
-- documentation matches code;
-- final re-audit finds no fundamental blocker;
-- final verified state is pushed to `main`.
+No unresolved Critical/High release findings; P0/P1 release tasks DONE or evidence-based REJECTED; no protected-network escape in tested failures; Servo REQUIRED features pass; Windows/Android paths proven and Linux/macOS meet declared gates; SecureAcces device/session revocation works; independent transports survive chaos; critical logic is mutation-resistant; build/test/lint/security gates pass; performance targets pass without security regression; signed updates/packages verified; docs match code; final re-audit finds no fundamental blocker; final verified state is in `main`.
