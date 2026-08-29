@@ -20,6 +20,37 @@ private origin server
 
 The operating-system default route must remain untouched in normal mode. Only traffic created by the embedded WebGate browser is allowed into the protected transport.
 
+## Developer project manager
+
+WebGate includes a cross-platform project manager for environment checks, controlled installation of missing developer tools, compilation and CI-parity verification.
+
+Windows:
+
+```powershell
+.\scripts\webgate.ps1
+```
+
+Linux/macOS:
+
+```sh
+./scripts/webgate.sh
+```
+
+Running either launcher without arguments opens the interactive menu. Scriptable examples:
+
+```sh
+python3 scripts/project_manager.py doctor
+python3 scripts/project_manager.py install --dry-run
+python3 scripts/project_manager.py install --yes
+python3 scripts/project_manager.py verify
+python3 scripts/project_manager.py build
+python3 scripts/project_manager.py build --release
+python3 scripts/project_manager.py servo
+python3 scripts/project_manager.py android
+```
+
+The installer is deliberately allowlisted: it does not accept arbitrary package names or shell commands, and it never handles WebGate runtime credentials. See [`docs/development/PROJECT_MANAGER.md`](docs/development/PROJECT_MANAGER.md) for the full command/security contract.
+
 ## Project goals
 
 1. One-click access to a private documentation site for a small set of trusted users.
@@ -60,6 +91,7 @@ Authoritative decisions:
 
 - [`ADR-0001-BROWSER-ENGINE.md`](docs/architecture/ADR-0001-BROWSER-ENGINE.md) — Servo primary browser.
 - [`ADR-0002-CROSS-PLATFORM-RUNTIME.md`](docs/architecture/ADR-0002-CROSS-PLATFORM-RUNTIME.md) — cross-platform/runtime model.
+- [`ADR-0003-SERVO-PROCESS-ISOLATION.md`](docs/architecture/ADR-0003-SERVO-PROCESS-ISOLATION.md) — Servo compromise-containment boundary.
 
 ## Platform tiers
 
@@ -201,11 +233,19 @@ WebGate integrates with those contracts rather than duplicating them.
 WebGate/
 ├── README.md
 ├── MASTER_PLAN.md
+├── scripts/
+│   ├── project_manager.py
+│   ├── webgate.ps1
+│   ├── webgate.sh
+│   └── tests/
 └── docs/
     ├── architecture/
     │   ├── ADR-0001-BROWSER-ENGINE.md
     │   ├── ADR-0002-CROSS-PLATFORM-RUNTIME.md
+    │   ├── ADR-0003-SERVO-PROCESS-ISOLATION.md
     │   └── TARGET_ARCHITECTURE.md
+    ├── development/
+    │   └── PROJECT_MANAGER.md
     ├── implementation/
     │   └── CROSS_PLATFORM_RESILIENCE_PLAN.md
     ├── integration/
@@ -215,8 +255,6 @@ WebGate/
         ├── RESILIENCE_CROSS_PLATFORM_AUDIT.md
         └── TOOLING_AUDIT.md
 ```
-
-The repository remains documentation-first until the transport, trust-boundary, browser, platform and configuration contracts are explicit enough to test.
 
 ## Non-negotiable security properties
 
@@ -245,9 +283,11 @@ The repository remains documentation-first until the transport, trust-boundary, 
 - [`docs/research/BROWSER_ENGINE_AUDIT.md`](docs/research/BROWSER_ENGINE_AUDIT.md)
 - [`docs/research/RESILIENCE_CROSS_PLATFORM_AUDIT.md`](docs/research/RESILIENCE_CROSS_PLATFORM_AUDIT.md)
 - [`docs/implementation/CROSS_PLATFORM_RESILIENCE_PLAN.md`](docs/implementation/CROSS_PLATFORM_RESILIENCE_PLAN.md)
+- [`docs/development/PROJECT_MANAGER.md`](docs/development/PROJECT_MANAGER.md)
 - [`docs/architecture/ADR-0001-BROWSER-ENGINE.md`](docs/architecture/ADR-0001-BROWSER-ENGINE.md)
 - [`docs/architecture/ADR-0002-CROSS-PLATFORM-RUNTIME.md`](docs/architecture/ADR-0002-CROSS-PLATFORM-RUNTIME.md)
+- [`docs/architecture/ADR-0003-SERVO-PROCESS-ISOLATION.md`](docs/architecture/ADR-0003-SERVO-PROCESS-ISOLATION.md)
 
 ## Status
 
-**Phase 0 — architecture/tooling research in progress. Servo is fixed as the primary engine; Windows and Android are the first two architecture-validation targets.**
+**Foundation tooling is executable and verified. Servo remains the primary engine; Windows and Android are the first two architecture-validation targets.**
