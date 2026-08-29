@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-webgate-core = { path = "../webgate-core" }
+webgate-core = { version = "0.1.0", path = "../webgate-core" }
 
 [lints]
 workspace = true

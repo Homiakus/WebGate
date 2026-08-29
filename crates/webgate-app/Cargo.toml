@@ -8,10 +8,10 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-webgate-browser = { path = "../webgate-browser" }
-webgate-core = { path = "../webgate-core" }
-webgate-platform = { path = "../webgate-platform" }
-webgate-transport = { path = "../webgate-transport" }
+webgate-browser = { version = "0.1.0", path = "../webgate-browser" }
+webgate-core = { version = "0.1.0", path = "../webgate-core" }
+webgate-platform = { version = "0.1.0", path = "../webgate-platform" }
+webgate-transport = { version = "0.1.0", path = "../webgate-transport" }
 
 [lints]
 workspace = true
