@@ -1,105 +1,254 @@
 # ADR-0001 — Protected Browser Engine
 
-- Status: **ACCEPTED FOR M1 BASELINE**
+- Status: **ACCEPTED — SERVO PRIMARY**
 - Date: **2026-08-29**
-- Scope: Windows-first WebGate protected browser capsule
+- Scope: WebGate protected browser capsule
 - Research: `docs/research/BROWSER_ENGINE_AUDIT.md`
 
 ## Context
 
-WebGate needs a fast embedded browser that can be forced through an application-local fail-closed proxy without routing unrelated OS traffic. The client is security-sensitive, opens an existing documents web application, and must retain modern web compatibility and fast browser security updates.
+WebGate needs a fast embedded browser that can be forced through an application-local, fail-closed transport without routing unrelated operating-system traffic. The client is security-sensitive, opens a controlled documentation application, and is intended to remain predominantly Rust.
 
-The previous baseline named Tauri 2 + Wry/WebView2. The browser audit showed that Tauri is not required for the protected browser capsule itself. WebView2 supplies the browser engine and Wry can host it directly from Rust while configuring an HTTP CONNECT/SOCKS5 proxy for the WebView.
+The previous M1 baseline selected Wry + Microsoft WebView2 because it was the safest short-term compatibility choice. The project has now made an explicit product decision to prioritize a native Rust browser-engine path and to adopt **Servo as the primary browser engine**.
+
+As of the 2026-08-29 research baseline, Servo provides a Rust embedding library, a `Servo`/`WebView` embedding model, Windows builds, HTTP and HTTPS proxy support, rendering-context APIs, and an LTS release track. Its web-platform compatibility is still behind Chromium, so WebGate must treat compatibility as a measured project responsibility rather than assume arbitrary-site compatibility.
 
 ## Decision
 
 Use:
 
 ```text
-Rust native application shell
+Rust native WebGate shell
         |
-       wry
+        v
+Servo embedding API
+  Servo / WebView / WebViewDelegate
         |
-Microsoft WebView2 Evergreen Runtime
+RenderingContext
         |
-app-local WebGate proxy
+WebGate network policy
         |
-secure transport
+app-local fail-closed proxy
+        |
+secure transport provider
 ```
 
-The protected browser implementation will be **Wry + WebView2 directly**, with the smallest practical native window/event-loop layer.
+**Servo is the canonical and default protected browser engine for WebGate.**
 
-Tauri is not a mandatory dependency of the protected browser path. It may still be used later for non-critical tooling if it produces a clear product benefit and does not weaken the capability/security boundary.
+The browser abstraction must not expose Chromium/WebView2-specific concepts to the rest of WebGate. `webgate-browser-servo` owns Servo integration; application, policy, identity and transport crates depend only on WebGate interfaces.
 
-## Why not C++ as the primary host?
+## WebView2 status
 
-A C++/Win32 WebView2 host and a Rust/Wry WebView2 host use the same Blink/V8/Edge runtime. C++ therefore does not make web rendering intrinsically faster. It can only reduce host wrapper/lifecycle overhead.
+Microsoft WebView2 is retained only as an **optional compatibility/fallback engine**, not the default architecture.
 
-A minimal C++/Win32+WebView2 harness will be maintained as a benchmark control. WebGate switches the production shell to C++ only if repeatable measurements show a material end-user advantage that justifies the memory-safety and maintenance tradeoff.
+A future `webgate-browser-webview2` adapter may be maintained for pages that fail the Servo compatibility contract, but:
 
-## Why not CEF?
+1. Servo remains the default engine.
+2. Compatibility fallback must be explicit and policy-controlled.
+3. A fallback engine must preserve the same fail-closed network invariants.
+4. The client must never silently switch engines because a page fails to render.
 
-CEF is a full Chromium embedding/distribution stack. It is valuable when low-level Chromium capabilities unavailable in WebView2 are required, but it increases binary/update/supply-chain responsibility without a demonstrated WebGate requirement.
+CEF and Ultralight are research/benchmark candidates only.
 
-CEF is a fallback decision only after a concrete WebView2 blocker is documented.
+## Why Servo
 
-## Why not Ultralight?
+### Rust-first architecture
 
-Ultralight is a strong low-footprint C/C++ experimental candidate and should be benchmarked if the documents application fits its supported web feature set. It is not the baseline because WebGate currently values arbitrary modern-web compatibility, security-update maturity and proven application-scoped proxy behavior over theoretical footprint wins. Its proprietary core also requires a separate licensing decision.
+Servo is written in Rust and exposes an embedding-oriented Rust API. This keeps the critical browser capsule much closer to WebGate's memory-safety and supply-chain model than a custom C++ browser host.
 
-## Why not Servo?
+### Embeddability
 
-Servo is a strategic Rust R&D candidate, but its embedding interfaces remain under active development in 2026 and production browser capabilities still have gaps. It should not sit on the critical access path until the WebGate compatibility/security suite passes against a stable Servo embedding release.
+Servo's current library API is centered around:
 
-## Performance implementation rules
+- `ServoBuilder` / `Servo`;
+- `WebViewBuilder` / `WebView`;
+- `ServoDelegate` / `WebViewDelegate`;
+- `RenderingContext`;
+- `EventLoopWaker` and `Servo::spin_event_loop`.
 
-1. Use one persistent protected WebView wherever possible.
-2. Do not destroy/recreate the browser for ordinary navigation.
-3. Create the native shell before browser initialization for immediate perceived startup.
-4. Start the restricted loopback proxy immediately; it must listen in fail-closed mode even before the remote transport is healthy.
-5. Initialize WebView2 against that proxy in parallel with transport establishment.
-6. Navigate to protected content only after transport and private-origin health checks pass.
-7. Keep the User Data Folder local and dedicated to WebGate.
-8. Disable unnecessary browser capabilities in release builds.
-9. Treat external links as system-browser navigation outside the protected capsule.
-10. Never allow proxy failure to cause direct WebView networking.
+This fits WebGate's requirement to own the shell, navigation policy, lifecycle and transport state machine.
 
-## Required M1 benchmark
+### App-local proxy model
 
-Compare at minimum:
+Servo has HTTP and HTTPS proxy support. WebGate will configure protected network access through a WebGate-owned local proxy and will make that proxy fail closed. Proxy selection/configuration is part of the browser-adapter boundary and must not be controlled by page content.
+
+### Cross-platform direction
+
+Servo supports Windows, Linux, macOS, Android and OpenHarmony. WebGate remains Windows-first, but the browser-engine decision no longer hard-binds the architecture to a Windows Chromium runtime.
+
+### Performance direction
+
+Servo is explicitly designed as a lightweight, parallel browser engine. WebGate will measure actual performance on the documentation workload rather than infer performance from language or marketing claims.
+
+## Known risks accepted by this ADR
+
+Servo is not Chromium and does not yet implement every Web Platform feature required by arbitrary modern sites. The project therefore accepts these obligations:
+
+- maintain a WebGate site-compatibility suite;
+- inventory every browser API required by the documents application;
+- block production rollout on unsupported security-critical functionality;
+- track Servo releases and LTS updates;
+- run visual/regression tests against every accepted Servo upgrade;
+- keep a policy-controlled WebView2 adapter available as a contingency if required.
+
+A Servo regression must fail closed; it must never cause protected navigation to escape through a normal system browser or direct network path.
+
+## Browser crate boundary
+
+Target workspace:
 
 ```text
-A: Rust + Wry + WebView2
-B: C++ Win32 + WebView2
+crates/
+├── webgate-browser/          engine-independent browser contract
+├── webgate-browser-servo/    canonical Servo adapter
+└── webgate-browser-webview2/ optional compatibility adapter
 ```
 
-Optional if site compatibility is proven:
+The engine-independent layer owns concepts such as:
+
+```rust
+trait ProtectedBrowser {
+    async fn start(&mut self, policy: BrowserPolicy) -> Result<()>;
+    async fn navigate(&mut self, target: ProtectedTarget) -> Result<()>;
+    async fn health(&self) -> BrowserHealth;
+    async fn clear_session_data(&mut self) -> Result<()>;
+    async fn shutdown(&mut self) -> Result<()>;
+}
+```
+
+The exact trait will be refined during M1; it must not expose Servo internals.
+
+## Network invariant
+
+Servo is never allowed unrestricted direct network access for protected content.
+
+Required model:
 
 ```text
-C: C++ + Ultralight
+Servo
+  |
+  v
+127.0.0.1:<ephemeral WebGate proxy>
+  |
+  +-- transport healthy --> protected origin
+  |
+  +-- transport unhealthy --> DENY
 ```
 
-Measure cold/warm startup, click-to-first-paint, working set, CPU, process count and transport-failure behavior. A browser is disqualified if it is faster but cannot prove fail-closed routing.
+No automatic direct fallback is permitted.
+
+The local proxy must be destination-restricted, bind only to loopback, and reject requests until the selected secure transport and private origin are healthy.
+
+## M1 implementation rules
+
+1. Build the protected browser directly around Servo's embedding library.
+2. Use one persistent Servo instance/WebView where practical.
+3. Integrate Servo with the native event loop through `EventLoopWaker`/`spin_event_loop`.
+4. Implement a WebGate-owned rendering context/window layer.
+5. Configure HTTP/HTTPS proxying before protected navigation.
+6. Start the local proxy in fail-closed state before Servo is allowed to navigate.
+7. Enforce navigation/origin policy outside page JavaScript.
+8. Intercept external navigation and open it only via explicit policy in the system browser.
+9. Keep browser/session data in a dedicated WebGate location.
+10. Disable or gate debugging capabilities in production.
+11. Never let a Servo error, crash, unsupported feature or proxy failure cause direct protected-origin access.
+
+## Required M1 validation
+
+M1 must test at least:
+
+```text
+A. Servo + healthy WebGate proxy
+   -> protected site reachable
+
+B. Servo + proxy stopped
+   -> protected site unreachable
+   -> no direct packets to protected origin
+
+C. Servo + transport unavailable
+   -> fail-closed error UI
+
+D. redirect/subresource/WebSocket attempts
+   -> cannot bypass policy
+
+E. required document-site feature matrix
+   -> all production-critical features pass
+```
+
+Performance measurements:
+
+- cold process-to-window time;
+- cold process-to-first-protected-paint;
+- warm navigation;
+- idle and active RSS;
+- CPU at idle;
+- long-document scroll/frame stability;
+- JavaScript workload relevant to the actual site;
+- process/thread count;
+- recovery after transport loss;
+- recovery after suspend/resume and network transition.
+
+## Compatibility gate
+
+Servo does not need to pass arbitrary-browser compatibility. It must pass **the WebGate application contract**.
+
+Before production, maintain a machine-readable compatibility inventory covering at least:
+
+- authentication/session cookies;
+- TLS and certificate behavior;
+- fetch/XHR;
+- navigation/redirects;
+- forms;
+- required CSS/layout;
+- required JavaScript APIs;
+- file/document viewing workflow;
+- downloads if enabled;
+- printing if required;
+- WebSocket/SSE if used;
+- clipboard if used;
+- accessibility requirements;
+- IME/Cyrillic text input;
+- CJK only if the product requires it.
+
+Unsupported optional functionality should be removed from the site or feature-gated before replacing Servo.
+
+## Dependency/update policy
+
+Servo releases must be pinned. WebGate should prefer an appropriate Servo LTS line for production once the compatibility suite passes, while testing current releases in CI before promotion.
+
+Every Servo upgrade requires:
+
+1. build reproducibility check;
+2. dependency/security scan;
+3. compatibility suite;
+4. visual regression tests;
+5. network-escape tests;
+6. performance regression tests;
+7. signed WebGate release validation.
 
 ## Consequences
 
 ### Positive
 
-- smaller application framework surface than mandatory Tauri;
-- Rust memory safety for most client control logic;
-- Chromium/Edge compatibility;
-- per-WebView application-scoped proxy model;
-- Evergreen security updates;
-- no bundled CEF distribution by default;
-- straightforward benchmark against native C++ using the same engine.
+- canonical browser path is Rust-first;
+- less dependence on the Windows Edge runtime;
+- direct control over embedding lifecycle and rendering integration;
+- cross-platform engine direction;
+- architecture aligns with WebGate's goal of a purpose-built protected browser rather than a generic Chromium wrapper;
+- browser networking can be treated as a first-class WebGate security boundary.
 
 ### Negative
 
-- WebView2 retains Chromium-family process/memory overhead;
-- Windows implementation remains tied to the WebView2 runtime;
-- direct Wry hosting requires a little more application-shell work than full Tauri;
-- cross-platform browser engines remain platform-specific behind the WebGate browser boundary.
+- Web compatibility risk is higher than WebView2/Chromium;
+- WebGate must own a stronger compatibility/regression test suite;
+- monthly Servo releases may contain breaking changes outside an LTS line;
+- some browser capabilities may need product-specific workarounds or site simplification;
+- the WebView2 compatibility adapter may still be needed during transition.
 
 ## Supersession rule
 
-Where older WebGate documentation says **“Tauri 2 + Wry/WebView2”** as a mandatory protected-browser stack, this ADR supersedes that wording with **“Rust + Wry + WebView2; Tauri optional outside the critical browser path.”**
+This ADR supersedes every older WebGate document that names **Tauri**, **Wry/WebView2**, **WebView2**, **CEF**, or **Ultralight** as the primary protected browser engine.
+
+The canonical rule is now:
+
+> **Servo is the primary protected browser engine. WebView2 is optional compatibility fallback only.**
