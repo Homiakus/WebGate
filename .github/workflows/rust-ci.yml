@@ -30,6 +30,12 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
 
+      - name: Project manager tests
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+      - name: Project manager command contract
+        run: python3 scripts/project_manager.py verify --dry-run
+
       - name: Architecture boundaries
         run: python3 scripts/check_architecture.py
 

@@ -3,3 +3,6 @@
 .DS_Store
 .idea/
 .vscode/
+.webgate/
+__pycache__/
+*.pyc
