@@ -1,0 +1,13 @@
+[package]
+name = "webgate-platform"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+webgate-core = { path = "../webgate-core" }
+
+[lints]
+workspace = true

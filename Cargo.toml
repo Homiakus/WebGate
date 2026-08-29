@@ -1,0 +1,25 @@
+[workspace]
+members = [
+    "crates/webgate-app",
+    "crates/webgate-browser",
+    "crates/webgate-core",
+    "crates/webgate-platform",
+    "crates/webgate-transport",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/Homiakus/WebGate"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+expect_used = "deny"
+panic = "deny"
+unwrap_used = "deny"

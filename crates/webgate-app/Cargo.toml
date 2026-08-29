@@ -1,0 +1,17 @@
+[package]
+name = "webgate-app"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+webgate-browser = { path = "../webgate-browser" }
+webgate-core = { path = "../webgate-core" }
+webgate-platform = { path = "../webgate-platform" }
+webgate-transport = { path = "../webgate-transport" }
+
+[lints]
+workspace = true
