@@ -2,6 +2,8 @@
 
 Research snapshot: **2026-08-29**
 
+Canonical browser engine: **Servo**. See `docs/architecture/ADR-0001-BROWSER-ENGINE.md`.
+
 ## 1. Product definition
 
 WebGate is a **protected browser capsule** for a small set of trusted users.
@@ -15,10 +17,10 @@ WebGate starts/activates
       ↓
 secure transport is selected automatically
       ↓
-private document opens
+private document opens in Servo
 ```
 
-The user should not have to understand VPNs, endpoints, routes or failover.
+The user should not have to understand VPNs, endpoints, routes, browser engines or failover.
 
 ---
 
@@ -32,20 +34,22 @@ The user should not have to understand VPNs, endpoints, routes or failover.
                                         ▼
 ┌────────────────────────────────────────────────────────────────────┐
 │                          WebGate Client                            │
-│                         Rust / Tauri 2                             │
+│                              Rust                                 │
 │                                                                    │
 │  ┌────────────────┐     ┌──────────────────────┐                  │
 │  │ Deep-link gate │────►│ Navigation Policy    │                  │
 │  └────────────────┘     └──────────┬───────────┘                  │
 │                                     │                              │
-│                            ┌────────▼────────┐                     │
-│                            │ WebView2 / Wry  │                     │
-│                            └────────┬────────┘                     │
-│                                     │ per-WebView SOCKS/HTTP       │
-│                            ┌────────▼────────┐                     │
-│                            │ Local Proxy Gate │                     │
-│                            │ allowlist only   │                     │
-│                            └────────┬────────┘                     │
+│                         ┌───────────▼───────────┐                  │
+│                         │ Servo browser engine │                  │
+│                         │ Servo / WebView      │                  │
+│                         └───────────┬───────────┘                  │
+│                                     │ HTTP/HTTPS proxy             │
+│                            ┌────────▼─────────┐                    │
+│                            │ Local Proxy Gate │                    │
+│                            │ allowlist only   │                    │
+│                            │ fail closed      │                    │
+│                            └────────┬─────────┘                    │
 │                                     │                              │
 │                     ┌───────────────▼────────────────┐             │
 │                     │ Transport Supervisor / Policy │             │
@@ -59,6 +63,7 @@ The user should not have to understand VPNs, endpoints, routes or failover.
 │  - signed config/policy                                            │
 │  - DPAPI credential vault                                          │
 │  - updater verification                                            │
+│  - Servo compatibility gate                                        │
 │  - health state machine                                            │
 │  - structured/redacted logs                                        │
 └───────────────────────────────┬────────────────────────────────────┘
@@ -85,6 +90,14 @@ The user should not have to understand VPNs, endpoints, routes or failover.
                  ▼                           ▼
           WebGate/Docs API             SecureAcces
           protected content       auth/session/authorization
+```
+
+Optional compatibility path, not part of the default data path:
+
+```text
+webgate-browser interface
+       ├── Servo adapter       ← default
+       └── WebView2 adapter    ← explicit policy-controlled fallback only
 ```
 
 ---
@@ -124,15 +137,19 @@ The page must not be able to:
 - obtain SecureAcces bearer tokens from native storage;
 - reconfigure endpoints;
 - disable the kill switch;
-- invoke arbitrary Tauri commands.
+- invoke arbitrary native commands;
+- select or switch browser engines;
+- change Servo network/proxy policy.
 
-Native IPC commands exposed to the WebView require an explicit capability allowlist.
+Native capabilities exposed to the page require an explicit capability allowlist and a narrow typed interface.
 
 ---
 
-## Boundary C — WebGate UI → transport process
+## Boundary C — Servo adapter → transport process
 
-Transport processes are supervised and least-privileged.
+Servo does not talk to raw transport implementations directly.
+
+The browser receives only a WebGate-owned protected proxy endpoint and browser policy. Transport processes are supervised and least-privileged.
 
 Control channel requirements:
 
@@ -160,7 +177,7 @@ ALLOW control.internal.example:443
 DENY  *
 ```
 
-This prevents the child process from becoming an accidental machine-wide circumvention/general Internet proxy.
+The proxy binds to loopback and starts in fail-closed mode. This prevents the transport path from becoming an accidental machine-wide circumvention/general Internet proxy.
 
 ---
 
@@ -188,28 +205,44 @@ Recommended Rust workspace:
 
 ```text
 crates/
-├── webgate-app/            Tauri lifecycle/UI composition
-├── webgate-browser/        WebView policy/navigation/downloads
-├── webgate-deeplink/       strict URI parsing + single instance dispatch
-├── webgate-config/         schemas, signed bundle, migration
-├── webgate-crypto/         signatures/fingerprints/secret wrappers
-├── webgate-identity/       device identity + session vault interface
-├── webgate-policy/         hard local policy + remote signed policy
-├── webgate-transport/      provider traits + health/failover
-├── webgate-supervisor/     child lifecycle/IPC/restart
-├── webgate-health/         state machines and diagnostics
-├── webgate-updater/        signed update policy
-├── webgate-observability/  redacted tracing
-└── webgate-platform/       DPAPI/Windows integration
+├── webgate-app/               native lifecycle/UI composition
+├── webgate-browser/           engine-independent browser contract
+├── webgate-browser-servo/     canonical Servo integration
+├── webgate-browser-webview2/  optional compatibility adapter
+├── webgate-deeplink/          strict URI parsing + single instance dispatch
+├── webgate-config/            schemas, signed bundle, migration
+├── webgate-crypto/            signatures/fingerprints/secret wrappers
+├── webgate-identity/          device identity + session vault interface
+├── webgate-policy/            hard local policy + remote signed policy
+├── webgate-transport/         provider traits + health/failover
+├── webgate-supervisor/        child lifecycle/IPC/restart
+├── webgate-health/            state machines and diagnostics
+├── webgate-updater/           signed update policy
+├── webgate-observability/     redacted tracing
+└── webgate-platform/          DPAPI/Windows integration
 ```
+
+The Servo adapter owns:
+
+- Servo engine lifecycle;
+- `WebView` creation;
+- `WebViewDelegate` integration;
+- rendering context;
+- event-loop wake/spin integration;
+- input/resize/DPI/IME plumbing;
+- browser storage/session location;
+- proxy configuration;
+- navigation/delegate callbacks translated into engine-independent WebGate events.
 
 Principle:
 
 ```text
 UI cannot configure raw transport.
 Browser cannot read secrets.
+Servo cannot bypass the WebGate proxy for protected traffic.
 Transport cannot change hard UI/security policy.
 Remote policy cannot weaken compiled hard invariants.
+Web content cannot select browser engine or transport.
 ```
 
 ---
@@ -240,10 +273,11 @@ A transport is not considered healthy merely because a protocol handshake succee
 Health levels:
 
 1. local provider alive;
-2. secure transport established;
-3. relay reachable;
-4. origin reachable;
-5. protected health endpoint returns expected authenticated response semantics.
+2. local proxy gate healthy;
+3. secure transport established;
+4. relay reachable;
+5. origin reachable;
+6. protected health endpoint returns expected authenticated response semantics.
 
 This avoids false-positive "VPN connected" states where the actual site is unreachable.
 
@@ -270,22 +304,25 @@ Rules:
 - keep at least one cold/standby independent provider;
 - do not switch based on one lost packet;
 - recover primary only after a stability window;
-- persist only non-sensitive endpoint health hints.
+- persist only non-sensitive endpoint health hints;
+- transport failover must not recreate Servo or alter its security model.
 
 ---
 
-# 7. Browser fail-closed rules
+# 7. Servo fail-closed rules
 
-The WebView is created with a proxy only after the local proxy is ready.
+The WebGate local proxy is created first in a fail-closed state. Servo protected networking is configured to use it before protected navigation is allowed.
 
 If transport is unavailable:
 
 ```text
-WebView protected navigation
+Servo protected navigation
         ↓
-local proxy unavailable/failing
+WebGate local proxy
         ↓
-WebGate offline page
+transport unavailable
+        ↓
+DENY + WebGate offline/error UI
 ```
 
 Never:
@@ -293,9 +330,17 @@ Never:
 ```text
 transport failed
       ↓
-remove WebView proxy
+remove Servo proxy / use direct network
       ↓
 direct connection
+```
+
+Never:
+
+```text
+Servo page/render failure
+      ↓
+silently open protected URL in WebView2/system browser
 ```
 
 The direct path is not a fallback.
@@ -312,9 +357,42 @@ system browser
 normal OS Internet
 ```
 
+External-browser navigation must not include protected credentials or protected-only URLs that expose sensitive information.
+
 ---
 
-# 8. Origin topology
+# 8. Servo compatibility contract
+
+Servo is required to support the **WebGate documents application**, not arbitrary websites.
+
+Maintain a machine-readable feature matrix:
+
+```text
+feature                 requirement   status
+------------------------------------------------
+auth cookies            REQUIRED      PASS/FAIL
+fetch/XHR               REQUIRED      PASS/FAIL
+forms                   REQUIRED      PASS/FAIL
+site CSS/layout         REQUIRED      PASS/FAIL
+Cyrillic/IME            REQUIRED      PASS/FAIL
+document navigation     REQUIRED      PASS/FAIL
+printing                OPTIONAL/...  PASS/FAIL
+WebSocket               OPTIONAL/...  PASS/FAIL
+```
+
+Every Servo upgrade must run:
+
+- feature compatibility suite;
+- visual regression suite;
+- network-escape tests;
+- performance regression tests;
+- crash/recovery tests.
+
+Prefer a Servo LTS line for production after qualification. Current releases may be tested continuously before promotion.
+
+---
+
+# 9. Origin topology
 
 The Russian origin server does not require static IP or inbound port forwarding.
 
@@ -338,7 +416,7 @@ The relays have stable public endpoints; the origin does not.
 
 ---
 
-# 9. Relay requirements
+# 10. Relay requirements
 
 Relay A and Relay B should ideally differ by:
 
@@ -357,11 +435,11 @@ Relays store as little sensitive state as practical.
 
 ---
 
-# 10. Bootstrap and policy model
+# 11. Bootstrap and policy model
 
 Two configuration classes:
 
-## 10.1 Bootstrap bundle
+## 11.1 Bootstrap bundle
 
 Short-lived, manually delivered once.
 
@@ -373,7 +451,7 @@ Purpose:
 
 It expires and becomes useless after activation.
 
-## 10.2 Remote signed policy
+## 11.2 Remote signed policy
 
 Longer-lived and refreshable.
 
@@ -383,26 +461,31 @@ Contains:
 - relay endpoint descriptors;
 - transport preferences;
 - minimum client version;
+- browser compatibility/fallback policy;
 - feature policy;
 - certificate/key IDs;
 - policy version and expiry.
 
 It does **not** contain the device private key.
 
+Remote policy may disable optional compatibility fallback but may not silently replace Servo for protected browsing.
+
 ---
 
-# 11. Local hard policy vs remote policy
+# 12. Local hard policy vs remote policy
 
 Some values must be impossible to weaken remotely.
 
 Compiled hard invariants:
 
 ```text
+primary_browser_engine = servo
 fail_closed = true
 allow_direct_protected_origin = false
+allow_silent_engine_fallback = false
 require_policy_signature = true
 allow_unsigned_update = false
-allow_webview_devtools_release = false
+allow_browser_devtools_release = false
 allow_arbitrary_native_ipc = false
 ```
 
@@ -420,7 +503,7 @@ effective origins
 
 ---
 
-# 12. Device lifecycle
+# 13. Device lifecycle
 
 ```text
 UNENROLLED
@@ -440,7 +523,7 @@ A revoked device cannot restore trust merely by reinstalling WebGate and reusing
 
 ---
 
-# 13. Credentials
+# 14. Credentials
 
 Separate credentials by purpose:
 
@@ -458,14 +541,16 @@ Compromise containment is better when credentials can rotate independently.
 
 ---
 
-# 14. SecureAcces placement
+# 15. SecureAcces placement
 
 SecureAcces is behind the transport, inside the trusted server application boundary.
 
 Recommended request path:
 
 ```text
-WebGate request
+Servo/WebGate request
+    ↓
+WebGate protected transport
     ↓
 reverse proxy
     ↓
@@ -482,7 +567,7 @@ The relay/VPN layer does not implement business authorization.
 
 ---
 
-# 15. Availability model
+# 16. Availability model
 
 The design explicitly protects against:
 
@@ -494,7 +579,8 @@ The design explicitly protects against:
 | AWG path blocked/degraded | switch to independent fallback |
 | UDP restricted | TCP/443-class fallback |
 | transport process crash | supervisor restart/failover |
-| WebView process crash | app recovers without exposing direct path |
+| Servo crash | browser capsule recovers without exposing direct path |
+| Servo unsupported feature | explicit controlled error; never direct/silent engine fallback |
 | policy endpoint A down | endpoint B / cached valid policy |
 | expired policy with no refresh | fail closed according to expiry policy |
 | user session revoked | protected requests denied by SecureAcces |
@@ -502,7 +588,7 @@ The design explicitly protects against:
 
 ---
 
-# 16. Cached operation
+# 17. Cached operation
 
 For resilience, WebGate may cache the last valid signed policy.
 
@@ -517,14 +603,14 @@ Rules:
 
 ---
 
-# 17. DNS strategy
+# 18. DNS strategy
 
 Protected host resolution should not rely solely on the local ISP resolver.
 
 Preferred model:
 
 ```text
-WebView sends hostname to local proxy
+Servo sends protected hostname through WebGate proxy policy
       ↓
 transport provider resolves protected hostname
       ↓
@@ -542,14 +628,15 @@ Bootstrap options may include:
 
 ---
 
-# 18. Update architecture
+# 19. Update architecture
 
-Application update is part of the trust chain.
+Application and Servo-engine updates are part of the trust chain.
 
 Signed release manifest should include:
 
 ```text
 client version
+Servo version/LTS line
 platform/arch
 package hash
 sidecar hashes
@@ -562,20 +649,25 @@ At startup, WebGate verifies bundled sidecars before execution.
 
 If a sidecar hash does not match the signed manifest, the transport is not started.
 
+Servo upgrades are promoted only after compatibility, visual, security and performance regression suites pass.
+
 ---
 
-# 19. Security testing requirements
+# 20. Security testing requirements
 
 Required before production:
 
 - deep-link parser property tests;
 - config signature fuzzing;
 - config migration tests;
-- navigation allowlist bypass tests;
+- Servo navigation allowlist bypass tests;
+- Servo proxy/direct-fallback negative tests;
+- Servo compatibility tests for every REQUIRED site feature;
+- Servo visual regression tests;
+- Servo crash/recovery tests;
 - IDN/punycode/Unicode hostname tests;
 - local proxy destination bypass tests;
 - DNS leak tests;
-- direct-fallback negative tests;
 - child-process IPC authentication tests;
 - transport failover chaos tests;
 - session revocation integration tests against SecureAcces;
@@ -591,13 +683,13 @@ Required before production:
 
 ---
 
-# 20. Architectural verdict
+# 21. Architectural verdict
 
 The target system should be considered three cooperating planes:
 
 ```text
 APPLICATION PLANE
-Tauri/Wry browser + UX + local policy
+Rust shell + Servo + browser/navigation policy
 
 TRANSPORT PLANE
 restricted local proxy + pluggable resilient transports + relays
@@ -608,4 +700,8 @@ SecureAcces + document resource ownership/permissions
 
 Keeping these planes separate is the main architectural rule for WebGate.
 
-It allows transport technology to evolve rapidly without destabilizing either the browser UX or the authorization model.
+It allows transport technology to evolve rapidly without destabilizing either the Servo browser capsule or the authorization model.
+
+The canonical browser rule is:
+
+> **Servo is primary. WebView2 exists only as an explicit compatibility adapter if a documented production requirement cannot be met by Servo.**
