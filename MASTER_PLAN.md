@@ -6,166 +6,182 @@
 **Research baseline:** 2026-08-29  
 **Canonical browser:** Servo primary; compatibility engines explicit-only.
 
-`MASTER_PLAN.md` is the single source of truth. Every material finding is recorded before scope changes. Every task is complete only after verification and a non-force push/fast-forward to `main`.
+`MASTER_PLAN.md` is the single source of truth. Material findings are recorded before scope changes. An implementation task is DONE only after its acceptance checks pass and the verified state reaches `main` without force push.
 
 # 1. Mission
 
-Build a secure, resilient, cross-platform protected-browser client for a small trusted-user set. A trusted Telegram/HTTPS link opens WebGate; Servo renders the private web application; only WebGate browser traffic traverses an application-local fail-closed transport; the private origin may use dynamic IP/CGNAT; `SecureAcces` remains authoritative for server-side authorization.
+Build WebGate as a secure, resilient, cross-platform protected-browser client for a small trusted-user set. Trusted Telegram/HTTPS links open WebGate; Servo renders the private application; only protected browser traffic traverses an application-local fail-closed path; the private origin may use dynamic IP/CGNAT; `SecureAcces` remains authoritative for server-side authorization.
 
 Primary targets: Windows, Android as an early architecture gate, Linux, macOS.
 
 # 2. Current State
 
-The repository has a portable Rust workspace with separate core/browser/transport/platform/app crates and an exact-commit GitHub Actions verification workflow. No Servo runtime, real transport provider, platform key store, or control API exists yet.
+The repository contains a portable Rust workspace with core/browser/transport/platform/app crates. Exact-SHA CI enforces formatting, build, tests, Clippy, lockfile, dependency/advisory/license/source policy and the internal crate dependency DAG. No Servo dependency, real transport, device-key adapter or SecureAcces control API exists yet.
+
+A new security constraint discovered during T-004 pre-flight is now canonical: Servo must be treated as potentially compromised because its own renderer sandbox is not a reliable security boundary on Windows/Android. Long-lived secrets and privileged transport/authentication authority must therefore live behind a separate trusted broker capability boundary.
 
 # 3. Architecture Map
 
 ```text
 untrusted link
     ↓
-webgate-app (composition)
-    ├── webgate-browser ── Servo adapter later
-    ├── webgate-transport ─ provider/state boundary
-    ├── webgate-platform ─ OS capability boundary
-    └── webgate-core ─ pure portable invariants
-                ↓
-       loopback fail-closed proxy
-                ↓
-      replaceable secure transports
-                ↓
-        Relay A / Relay B
-                ↓
-          private origin
-                ↓
-          SecureAcces authz
+┌────────────────────────────────────────────────────┐
+│ Browser capsule — assume compromise               │
+│ Servo + page/render/input                         │
+│ bounded active web capability only                │
+└─────────────────┬──────────────────────────────────┘
+                  │ narrow authenticated capabilities
+                  ▼
+┌────────────────────────────────────────────────────┐
+│ Trusted broker/control plane                      │
+│ policy verification / device signer / session     │
+│ transport control / privileged audit / updates    │
+└───────────┬────────────────────────────────────────┘
+            │
+    destination-restricted fail-closed proxy
+            │
+     replaceable transports
+            │
+      Relay A / Relay B
+            │
+       private origin
+            │
+       SecureAcces authz
 ```
 
-Internal crate direction is explicit and machine-checked. Core never imports OS/browser/VPN implementations.
+Portable crates own contracts. Platform implementations and Servo-specific types stay outward of core. See `docs/architecture/ADR-0003-SERVO-PROCESS-ISOLATION.md`.
 
 # 4. Baseline
 
-Initial baseline: documentation only; build/tests N/A.
+Current executable baseline:
 
-Current baseline after foundation work:
-
-- Rust workspace: present;
-- committed `Cargo.lock`: required from T-003 onward;
+- Rust workspace and committed `Cargo.lock`;
 - workspace `unsafe_code = forbid`;
-- architecture dependency checker: required;
-- `cargo fmt --all -- --check`: required;
-- `cargo check --workspace --all-targets --locked`: required;
-- `cargo test --workspace --locked`: required;
-- `cargo clippy --workspace --all-targets --locked -- -D warnings`: required;
-- `cargo-deny check --all-features`: required;
-- executable GitHub Actions refs: immutable commit SHAs;
-- mutation/coverage/benchmarks: introduced when corresponding critical logic exists.
+- `scripts/check_architecture.py` internal dependency guard;
+- `cargo fmt --all -- --check`;
+- `cargo check --workspace --all-targets --locked`;
+- `cargo test --workspace --locked`;
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`;
+- `cargo-deny check --all-features`;
+- executable GitHub Actions pinned to immutable SHAs.
 
-The execution container lacks Rust and direct GitHub DNS. Verification therefore uses an isolated work branch; GitHub Actions validates the exact candidate SHA; `main` advances only after PASS and synchronization.
+The execution container lacks Rust/direct GitHub DNS, so candidate commits are verified by GitHub Actions on isolated work branches before synchronized non-force `main` fast-forward.
 
 # 5. System Invariants
 
 - **I-001:** Servo is the default protected browser.
 - **I-002:** normal mode never changes the OS default route.
-- **I-003:** transport loss fails closed; no protected direct fallback.
-- **I-004:** browser failure never silently opens WebView2/system browser.
-- **I-005:** links identify resources; they are not persistent bearer credentials.
-- **I-006:** device private keys are generated on-device.
-- **I-007:** bootstrap, remote policy and updates are signed/rollback-aware.
+- **I-003:** transport loss fails closed; protected origin never gains direct fallback.
+- **I-004:** browser failure never silently opens a compatibility/system browser.
+- **I-005:** links are resource identifiers, not persistent bearer credentials.
+- **I-006:** device private keys are generated on-device and never exported through browser APIs.
+- **I-007:** bootstrap, policy and updates are signed/rollback-aware.
 - **I-008:** remote policy cannot weaken compiled security invariants.
-- **I-009:** transport implementations remain replaceable providers.
-- **I-010:** SecureAcces remains authoritative for authorization.
-- **I-011:** shared core has no DPAPI/Win32/desktop-sidecar assumption; Android is first-class.
-- **I-012:** secret/device key storage is a platform capability; hardware-backed identity is preferred where available.
+- **I-009:** transport implementations are replaceable providers.
+- **I-010:** SecureAcces is authoritative for authorization.
+- **I-011:** core contains no desktop-only DPAPI/Win32/sidecar assumption; Android is first-class.
+- **I-012:** device signing/secret storage is a platform capability; hardware-backed keys are preferred.
 - **I-013:** production has at least two materially independent network failure domains.
-- **I-014:** browser proxy endpoints are loopback-only and non-zero/bound.
+- **I-014:** browser proxy endpoints are loopback-only and bound/non-zero.
 - **I-015:** internal crate dependency direction is machine-enforced.
-- **I-016:** CI code-execution actions are immutable-SHA pinned.
-- **I-017:** internal path dependencies carry explicit workspace-compatible versions; wildcard dependency policy is denied.
+- **I-016:** CI code-execution actions use immutable commit pins.
+- **I-017:** internal path dependencies carry explicit compatible versions; wildcard dependencies are denied.
+- **I-018:** the Servo/browser capsule is not trusted with long-lived device/bootstrap/transport/session-refresh secrets or generic privileged native APIs.
+- **I-019:** network fail-closed and browser-compromise containment are distinct properties and require separate tests.
 
 # 6. Findings Registry
 
 ## F-001 — No executable baseline
 **Status:** Resolved · **Severity:** High · **Confidence:** Confirmed  
-Documentation-only start prevented code verification. Resolved by T-002 portable workspace and executable CI baseline.
+T-002 created the portable workspace and executable CI baseline.
 
 ## F-002 — Roadmap was not execution-grade
 **Status:** Resolved · **Severity:** High · **Confidence:** Confirmed  
-Resolved by T-001: findings, tasks, DAG, risks, baseline and iteration log became canonical.
+T-001 established findings/tasks/DAG/baseline/iteration traceability.
 
 ## F-003 — Desktop-only runtime assumptions
-**Status:** Planned · **Category:** Cross-platform · **Severity:** High · **Confidence:** Confirmed  
-Earlier DPAPI/sidecar assumptions can force Android rewrites. T-006/T-009/T-010 keep platform capabilities outside core.
+**Status:** Planned · **Severity:** High · **Confidence:** Confirmed  
+Earlier DPAPI/child-process assumptions can force Android rewrites. Addressed by T-006/T-009/T-010/T-019.
 
 ## F-004 — Fixed Ed25519 device identity is not universally hardware-backed
-**Status:** Planned · **Category:** Security/Cross-platform · **Severity:** High · **Confidence:** Strong  
-Use algorithm-agile `DeviceSigner`; prefer hardware-backed P-256/ES256 where appropriate; project-controlled Ed25519 remains suitable for policy/update signatures.
+**Status:** Planned · **Severity:** High · **Confidence:** Strong  
+Use algorithm-agile `DeviceSigner`; prefer hardware-backed P-256/ES256 where appropriate; Ed25519 remains suitable for project-controlled policy/update signatures.
 
 ## F-005 — Servo compatibility/security is release-sensitive
-**Status:** Planned · **Category:** Browser/Security · **Severity:** High · **Confidence:** Confirmed  
-Servo is pre-1.0 and fast-moving. T-004/T-014 require exact pin, upgrade review, compatibility and security gates.
+**Status:** Planned · **Severity:** High · **Confidence:** Confirmed  
+Servo is pre-1.0 and fast-moving. T-004/T-014 require exact release pin, upgrade review and compatibility/security gates.
 
 ## F-006 — Architecture boundaries were documentation-only
-**Status:** Resolved · **Severity:** Medium · **Confidence:** Confirmed  
-T-002 created crate boundaries; T-003 adds machine-enforced internal dependency policy.
+**Status:** Resolved · **Severity:** Medium  
+T-002/T-003 established crate and CI-enforced dependency boundaries.
 
 ## F-007 — Local execution environment lacks Rust/network access
-**Status:** Resolved · **Category:** Environment · **Severity:** Medium · **Confidence:** Confirmed  
-Exact-SHA GitHub Actions verification on isolated branches is the accepted proof path.
+**Status:** Resolved · **Severity:** Medium  
+Exact-SHA Actions verification is the accepted proof path.
 
-## F-008 — `main` is not repository-enforced protected
-**Status:** Planned / BLOCKED capability · **Category:** Governance · **Severity:** Medium · **Confidence:** Confirmed  
-GitHub reports `protected: false` and no required checks. Current process still verifies exact SHA before non-force fast-forward. T-017 needs a repository-settings write capability not exposed by the connector.
+## F-008 — `main` lacks repository-enforced protection
+**Status:** Planned/BLOCKED · **Severity:** Medium · **Confidence:** Confirmed  
+Current connector exposes protection reads but no rule write. T-017 remains blocked; exact-SHA verification discipline mitigates.
 
-## F-009 — cargo-deny correctly rejected versionless internal path dependencies
-**Status:** Resolved in T-003 · **Category:** Dependency policy · **Severity:** Medium · **Confidence:** Confirmed  
-**Evidence:** candidate CI reported `error[wildcard]` for each `{ path = "..." }` internal dependency.  
-**Root cause:** Cargo path-only dependencies semantically omit a version and trigger `wildcards = "deny"`.  
-**Decision:** do not weaken policy; add `version = "0.1.0"` alongside each path. This makes internal compatibility intent explicit and keeps wildcard denial meaningful.
+## F-009 — cargo-deny rejected versionless internal path dependencies
+**Status:** Resolved · **Severity:** Medium · **Confidence:** Confirmed  
+Policy was preserved; manifests now specify explicit internal versions.
 
-## F-010 — checkout v4 is now a Node-20 legacy action
-**Status:** Resolved in T-003 · **Category:** Supply chain/CI · **Severity:** Low · **Confidence:** Confirmed  
-**Evidence:** GitHub runner warned that checkout v4 targets deprecated Node 20. Current checkout v5 declares `using: node24`.  
-**Decision:** pin checkout v5 commit `fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09` rather than freezing a known legacy runtime.
+## F-010 — checkout v4 used deprecated Node 20
+**Status:** Resolved · **Severity:** Low · **Confidence:** Confirmed  
+CI pins checkout v5 Node-24 commit.
+
+## F-011 — Servo is not a sufficient renderer sandbox on Windows/Android
+**Status:** Planned · **Category:** Browser/Security · **Severity:** High · **Confidence:** Confirmed
+
+**Evidence:** current Servo source has an unsupported sandbox branch for Windows/Android/ARM; Servo's browser-engine guidance has described multiprocess/sandboxing as partial and historically limited to Linux/macOS.  
+**Location:** Servo 0.5.0 embedding/runtime source; WebGate browser architecture.  
+**Current behavior:** if WebGate embeds Servo together with long-lived secrets/transport control, a browser-engine compromise shares that privilege boundary.  
+**Expected behavior:** browser compromise cannot export device keys, mutate trust roots, reconfigure unrestricted transport, or obtain long-lived refresh/bootstrap authority.  
+**Root cause:** Rust memory safety was being treated too close to a mature renderer sandbox assumption.  
+**Blast radius:** browser architecture, identity, transport, Android/Windows platform runtime, session handling.  
+**Affected invariants:** I-006, I-018, I-019.  
+**Affected tasks:** T-004/T-005, T-006, T-009..T-012, T-019.  
+**Direction:** keep Servo primary, but introduce a portable trusted-broker capability boundary and platform-specific process sandboxing as defense in depth. ADR-0003 records the decision.
 
 # 7. Risk Register
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| proxy failure escapes direct | Critical | negative tests before real VPN; immutable protected proxy contract |
-| Servo misses required site capability | High | machine-readable capability suite + explicit compatibility decision |
-| Android lifecycle destroys network state | High | early lifecycle probe + idempotent state machine |
-| primary protocol/provider blocked | High | independent fallback + dual relay |
-| stale/compromised dependency | High | lockfile, cargo-deny, exact pins, SBOM/security review |
-| platform key hardware differs | High | algorithm-agile device signer |
-| authz duplicated client-side | High | SecureAcces authoritative on every protected resource |
+| Servo/browser RCE reaches long-lived secrets | Critical | broker capability separation + platform sandbox defense in depth |
+| proxy failure escapes direct | Critical | negative tests + immutable proxy contract |
+| Servo misses required site capability | High | capability suite + explicit compatibility decision |
+| Android lifecycle/process model breaks assumptions | High | early Android probe + idempotent broker/browser lifecycle |
+| primary transport blocked | High | independent fallback + two relays |
+| dependency/security drift | High | lockfile/cargo-deny/exact pins/upgrade gate |
+| hardware key support varies | High | algorithm-agile DeviceSigner |
 
 # 8. Pareto Improvements
 
-1. Preserve portable boundaries before dependency growth.
-2. Make fail-closed/navigation decisions pure and mutation-testable.
-3. Prove Servo proxy isolation before real transport work.
-4. Run Android architecture probe early.
-5. Keep dependency/security gates green as Servo expands the graph.
-6. Add transport diversity only after browser isolation passes.
+1. Preserve portable contracts and broker/browser privilege separation before secrets exist.
+2. Prove basic Servo embedding and fail-closed normal networking.
+3. Implement narrow broker capability API before device/session/transport credentials.
+4. Validate Android lifecycle/isolation early.
+5. Add real transports only after browser/proxy boundaries are demonstrated.
 
 # 9. Dependency DAG
 
 ```text
-T-001 → T-002 → T-003 → T-004 → T-005 → T-006
-                              │        │
-                              └────→ T-007
-T-005 + T-006 + T-007 → T-008 → T-012 → T-013
-T-002 → T-009 → T-010 → T-011
+T-001 → T-002 → T-003 → T-018(plan) → T-004 → T-005 → T-019 → T-006
+                                                   │          │
+                                                   └──→ T-007 │
+T-005 + T-006 + T-007 + T-019 → T-008 → T-012 → T-013
+T-019 → T-009 → T-010 → T-011
 T-004 + T-005 → T-014
 T-010 + T-011 + T-013 + T-014 → T-015 → T-016
-T-017 governance runs independently while blocked on tooling capability
+T-017 governance runs independently while blocked
 ```
 
 # 10. Implementation Phases
 
-- **A Foundation:** T-001..T-003.
-- **B Servo capsule:** T-004..T-007.
-- **C Portable transport/device contracts:** T-008..T-010.
+- **A Foundation:** T-001..T-003 plus T-018 architecture reconciliation.
+- **B Servo capsule/containment:** T-004, T-005, T-019, T-006, T-007.
+- **C Transport/device contracts:** T-008..T-010.
 - **D SecureAcces + production transports:** T-011..T-013.
 - **E Qualification/release/re-audit:** T-014..T-016.
 - **Governance:** T-017.
@@ -173,141 +189,154 @@ T-017 governance runs independently while blocked on tooling capability
 # 11. Atomic Tasks
 
 ## T-001 — Establish execution-grade living plan
-**Status:** DONE · **Priority:** P0 · **Leverage:** HIGH
+**Status:** DONE · **Priority:** P0
 
 ## T-002 — Scaffold portable Rust boundaries
-**Status:** DONE · **Priority:** P0 · **Leverage:** HIGH  
-Created core/browser/transport/platform/app crates and loopback endpoint invariant. Exact candidate passed format/check/test/clippy before main fast-forward.
+**Status:** DONE · **Priority:** P0
 
-## T-003 — Harden CI, dependency policy and architecture checks
-**Status:** VERIFYING · **Priority:** P0 · **Type:** HARDEN · **Leverage:** HIGH
+## T-003 — Harden CI/dependency/architecture gates
+**Status:** DONE · **Priority:** P0  
+Exact corrected SHA passed verify + cargo-deny before `main` fast-forward.
 
-**Problem:** initial CI lacked lock enforcement, dependency/advisory policy, immutable action pins and a machine-enforced crate DAG.  
-**Scope:** `Cargo.lock`, `deny.toml`, internal manifests, `scripts/check_architecture.py`, `rust-ci.yml`, plan.  
-**Non-goals:** no Servo, coverage, mutation framework or branch-settings mutation.  
-**Implementation:** committed lockfile; `--locked` everywhere; cargo-deny; immutable action SHAs; explicit versions on internal path dependencies; architecture checker.  
-**Tests:** architecture checker, metadata lock verification, format/check/test/clippy, cargo-deny advisory/license/ban/source checks.  
-**Acceptance:** both `verify` and `dependency-policy` PASS on the exact corrected candidate SHA.  
-**Rollback:** revert this one iteration commit.  
-**Unexpected findings:** F-009, F-010.  
-**Failure recovery:** first candidate `1552fc3...` intentionally did not reach main because cargo-deny caught versionless internal path deps; corrected candidate is built cleanly from current main.
+## T-018 — Reconcile Servo sandbox gap into the trust architecture
+**Status:** DONE · **Priority:** P0 · **Type:** HARDEN · **Leverage:** HIGH
+
+**Problem:** Servo cannot be assumed to provide a renderer sandbox on Windows/Android.  
+**Evidence:** F-011.  
+**Goal:** define browser compromise assumptions, secret/privilege boundary, portable broker responsibilities and platform defense-in-depth direction before Servo code or credentials proliferate.  
+**Scope:** ADR-0003 + MASTER_PLAN.  
+**Non-goals:** process IPC implementation or OS sandbox code.  
+**Acceptance:** F-011 recorded; invariants I-018/I-019 added; downstream DAG changed so broker implementation precedes privileged identity/control-plane work.  
+**Verification:** existing repository CI must remain green because this is a planning-only change.
 
 ## T-004 — Pin Servo and build minimal embedding adapter
-**Status:** READY after T-003 PASS · **Priority:** P0 · **Leverage:** HIGH  
-Select a reviewed exact Servo release, add adapter crate without leaking Servo types into core, document native prerequisites, prove construction/event-loop/rendering-context lifecycle in CI where feasible.
+**Status:** READY · **Priority:** P0 · **Leverage:** HIGH
 
-## T-005 — Prove fail-closed Servo networking
-**Status:** TODO · **Priority:** P0 · **Type:** HARDEN · **Leverage:** HIGH  
-Positive proxy route and negative direct-IP/DNS/redirect/IPv4/IPv6/subresource/restart tests. Mutation testing required for allow/deny/fallback logic.
+Pin current reviewed Servo crate release rather than upstream `main`. Keep Servo types inside a dedicated adapter boundary. Prove builder/event-loop/rendering-context API integration at compile time; no production secret material exists in this task. Record native prerequisites and exact dependency graph changes.
 
-## T-006 — Build early Android lifecycle/embedding probe
-**Status:** TODO · **Priority:** P0 · **Leverage:** HIGH  
-Servo Android embedding, protected proxy path, pause/resume/recreate and transport lifecycle without desktop-only core assumptions.
+## T-005 — Prove fail-closed Servo normal networking
+**Status:** TODO · **Priority:** P0 · **Type:** HARDEN  
+Positive proxy route and negative direct-IP/DNS/redirect/IPv4/IPv6/subresource/restart tests. This proves normal browser-stack routing, not RCE containment.
 
-## T-007 — Implement strict navigation/deep-link policy
-**Status:** TODO · **Priority:** P1 · **Type:** HARDEN · **Leverage:** HIGH  
-Pure core logic with property/fuzz/mutation tests for schemes, IDN/Unicode, redirects, origins and opaque IDs.
+## T-019 — Implement the trusted broker capability boundary
+**Status:** TODO · **Priority:** P0 · **Type:** HARDEN · **Leverage:** HIGH
 
-## T-008 — Implement transport SPI and deterministic failover state machine
-**Status:** TODO · **Priority:** P1 · **Leverage:** HIGH  
-Property/mutation tests over timing/failure/retry/suspend/network-change space.
+Introduce browser↔broker semantic contracts and process/lifecycle boundary. Browser side receives no raw device key/bootstrap/transport-control secret. IPC is versioned, instance-bound, bounded and deny-by-default. Windows/Android process-isolation prototypes are evaluated separately; portable capability separation is mandatory regardless of OS sandbox support.
 
-## T-009 — Introduce algorithm-agile device identity
-**Status:** TODO · **Priority:** P1 · **Type:** HARDEN · **Leverage:** HIGH
+**Dependencies:** T-005.  
+**Blocks:** T-006, T-009..T-012.
 
-## T-010 — Implement platform secret/device adapters
-**Status:** TODO · **Priority:** P1 · **Type:** HARDEN · **Leverage:** HIGH  
-Windows DPAPI/CNG; Android Keystore; macOS Keychain/Secure Enclave where applicable; explicit Linux policy.
+## T-006 — Early Android lifecycle/embedding/isolation probe
+**Status:** TODO · **Priority:** P0  
+Validate Servo, proxy, pause/resume/recreate, broker lifecycle and Android isolation options without desktop-only core assumptions.
 
-## T-011 — Integrate control plane with SecureAcces
-**Status:** TODO · **Priority:** P1 · **Leverage:** HIGH  
-Reuse sessions/resource resolution/Authorize/revocation; no client-side tenant authority.
+## T-007 — Strict navigation/deep-link policy
+**Status:** TODO · **Priority:** P1 · **Type:** HARDEN  
+Pure property/fuzz/mutation-tested URL/origin policy.
 
-## T-012 — Implement primary resilient transport
-**Status:** TODO · **Priority:** P1 · **Leverage:** HIGH  
-Candidate Outline SDK + AmneziaWG behind restricted proxy/dialer; Android uses mobile/in-process architecture rather than mandatory child processes.
+## T-008 — Transport SPI + deterministic health/failover state machine
+**Status:** TODO · **Priority:** P1
 
-## T-013 — Add independent fallback and dual-relay failover
-**Status:** TODO · **Priority:** P1 · **Type:** HARDEN · **Leverage:** HIGH
+## T-009 — Algorithm-agile device identity
+**Status:** TODO · **Priority:** P1 · **Type:** HARDEN
 
-## T-014 — Qualify Servo compatibility/security/performance
-**Status:** TODO · **Priority:** P1 · **Type:** HARDEN · **Leverage:** HIGH
+## T-010 — Platform secret/device adapters
+**Status:** TODO · **Priority:** P1 · **Type:** HARDEN
 
-## T-015 — Signed packaging, updates and one-click link UX
-**Status:** TODO · **Priority:** P2 · **Type:** HARDEN · **Leverage:** MEDIUM
+## T-011 — SecureAcces control-plane integration
+**Status:** TODO · **Priority:** P1  
+Authorization remains server authoritative; broker obtains only necessary session capabilities.
 
-## T-016 — Final adversarial re-audit and debt deletion
-**Status:** TODO · **Priority:** P0 before release · **Type:** HARDEN · **Leverage:** HIGH
+## T-012 — Primary resilient transport
+**Status:** TODO · **Priority:** P1
+
+## T-013 — Independent fallback + dual-relay failover
+**Status:** TODO · **Priority:** P1 · **Type:** HARDEN
+
+## T-014 — Servo/site/security/performance qualification
+**Status:** TODO · **Priority:** P1 · **Type:** HARDEN
+
+## T-015 — Signed packaging/update/one-click link UX
+**Status:** TODO · **Priority:** P2 · **Type:** HARDEN
+
+## T-016 — Final adversarial re-audit/debt deletion
+**Status:** TODO · **Priority:** P0 before release
 
 ## T-017 — Enforce verified-main repository rule
-**Status:** BLOCKED · **Priority:** P2 · **Type:** HARDEN  
-Connector can read branch protection/rulesets but exposes no write action. Do not block implementation; continue exact-SHA verification discipline.
+**Status:** BLOCKED · **Priority:** P2  
+Blocked on repository-settings write capability.
 
 # 12. Testing Strategy
 
-Pure core tests → architecture/compile checks → browser adapter integration → proxy escape negatives → Android lifecycle/platform tests → transport chaos → SecureAcces integration → end-to-end trusted-link flow. Analyze `input × state × concurrency × timing × failure × permissions × configuration × external state` with boundary partitions, pairwise/high-risk N-wise, fuzz/property/metamorphic tests.
+Separate test classes explicitly:
+
+1. pure core/architecture checks;
+2. Servo API/compatibility tests;
+3. normal network fail-closed tests;
+4. browser-compromise/broker-capability negative tests;
+5. Android/platform lifecycle/isolation tests;
+6. transport chaos;
+7. SecureAcces integration;
+8. end-to-end trusted-link flow.
+
+Analyze `input × state × concurrency × timing × failure × permissions × configuration × external state` using boundary, pairwise/high-risk N-wise, fuzz/property/metamorphic tests.
 
 # 13. Mutation Testing Strategy
 
-Mandatory for URL/origin policy, fail-closed decisions, transport transitions, signed-policy validation, device proof and auth adapters. Planned tool: `cargo-mutants`; surviving mutants require contract analysis.
+Mandatory for URL/origin policy, fail-closed decisions, broker authorization, IPC validation, transport transitions, signed policy, device proof and auth adapters. Planned tool: `cargo-mutants`; surviving mutants require observable-contract analysis.
 
 # 14. Performance Baselines
 
-After Servo/proxy exists: process→shell, Servo-ready, proxy/transport-ready, trusted-link→first paint, warm nav, RSS/CPU, scroll stability, reconnect recovery, Android cold/warm start and battery-sensitive reconnect.
+Measure process→shell, Servo ready, broker ready, proxy/transport ready, link→first paint, warm navigation, RSS/CPU, frame stability, reconnect, IPC overhead and Android cold/warm/battery-sensitive recovery. Process isolation performance cost is measured rather than assumed.
 
 # 15. Security Hardening
 
-No reusable private key in bootstrap; signed/versioned policy/update formats; explicit roots/rotation; destination-restricted proxy; no direct fallback; minimal web→native capabilities; secret-redacted logs; per-device revocation; hardware-backed identity where possible; locked reviewed dependency graph; server-side authorization per resource.
+Browser treated as potentially compromised; long-lived secrets stay behind broker/platform signer; no reusable bootstrap key; signed policy/update; destination-restricted proxy; no direct fallback; semantic minimal IPC; secret-redacted logs; per-device revocation; hardware-backed identity where available; locked dependencies; server-side authz per resource.
 
 # 16. Migration Strategy
 
-`characterize → introduce boundary → dual compatibility only if needed → migrate → verify → remove legacy`. Compatibility browser remains explicit and uses identical protected-network policy.
+`characterize → introduce boundary → dual compatibility if needed → migrate → verify → remove legacy`. Servo remains primary. Future native Servo sandbox improvements strengthen defense in depth but do not remove the broker capability boundary without a new ADR/threat-model proof.
 
 # 17. Deferred Work
 
-- iOS until Servo/platform policy is reevaluated;
-- general-purpose system VPN;
+- iOS pending platform policy/Servo maturity;
+- full-device VPN;
 - arbitrary general browsing;
-- enterprise MDM/fleet orchestration;
-- distributed authorization infrastructure beyond observed scale.
+- enterprise fleet/MDM;
+- distributed auth infrastructure beyond actual scale.
 
 # 18. Rejected Decisions
 
-System-wide VPN as default; secret bearer links; silent browser fallback; DPAPI/Win32 in core; shared user VPN keys; authorization in transport; weakening cargo-deny wildcard policy to accommodate internal path deps; mutable/tag-only CI execution refs.
+System-wide VPN default; secret bearer links; silent browser fallback; DPAPI/Win32 in core; shared user VPN keys; transport-layer authorization; weakening dependency policy; treating Rust memory safety as a substitute for browser privilege isolation.
 
 # 19. Completed Tasks
 
-T-001 and T-002 are complete. T-003 becomes complete only when the corrected exact candidate passes both CI jobs and is fast-forwarded to main. Research and ADR work for Servo, SecureAcces, cross-platform/Android and target topology already exists.
+T-001, T-002, T-003 and T-018 are complete after their verified main pushes. Research/ADRs cover Servo, SecureAcces, cross-platform/Android, resilience and target topology.
 
 # 20. Iteration Log
 
 ## Iteration 1
-**Task:** T-001  
-**Unexpected:** F-001, F-003..F-006  
-**Commit:** `docs(plan): establish execution-grade living master plan`  
-**Push:** main  
-**Result:** PASS
+**Task:** T-001 · **Result:** PASS  
+**Commit:** `docs(plan): establish execution-grade living master plan` → main.
 
 ## Iteration 2
-**Task:** T-002  
-**Unexpected:** F-007  
-**Changes:** portable workspace + first enforced invariants.  
-**Tests:** format/check/test/clippy exact candidate PASS.  
-**Commit:** `refactor(core): scaffold portable Rust boundaries`  
-**Push:** main  
-**Result:** PASS
+**Task:** T-002 · **Unexpected:** F-007 · **Result:** PASS  
+Portable workspace; exact candidate format/check/test/clippy PASS; pushed main.
 
 ## Iteration 3
-**Task:** T-003  
-**Unexpected:** F-008, F-009, F-010  
-**Changes:** lockfile, cargo-deny, immutable CI pins, Node-24 checkout, explicit internal dependency versions, architecture DAG checker.  
-**First candidate:** `1552fc311cb2c785ce3d5f5f6222ccd607049511` — verify job PASS, dependency-policy FAIL on wildcard path deps; not pushed to main.  
-**Recovery decision:** preserve `wildcards = deny`, fix manifests, rebuild candidate from current main.  
-**Tests required:** architecture + lock + fmt/check/test/clippy + cargo-deny.  
-**Commit target:** `ci(security): lock dependencies and architecture gates`  
-**Push:** main only after corrected exact-SHA PASS.  
+**Task:** T-003 · **Unexpected:** F-008/F-009/F-010 · **Result:** PASS  
+First candidate correctly failed cargo-deny and never reached main. Corrected exact SHA `acae35585b00b88f854dbfacd699db34ebabaff4` passed verify + dependency-policy and was fast-forwarded to main.
+
+## Iteration 4
+**Task:** T-018  
+**Finding addressed:** F-011  
+**Changes:** documented Servo compromise-containment model; split normal network isolation from RCE containment; introduced trusted broker boundary and changed dependency ordering.  
+**Tests:** current repository CI must remain PASS.  
+**Plan changes:** T-019 added P0 before privileged identity/control-plane work.  
+**Commit target:** `docs(security): define Servo compromise boundary`  
+**Push:** main after exact-SHA CI PASS  
 **Result:** VERIFYING
 
 # 21. Definition of Final Done
 
-No unresolved Critical/High release findings; P0/P1 release tasks complete or evidence-based rejected; no tested protected-network escape; Servo required capabilities pass; Windows/Android paths proven and Linux/macOS meet declared gates; SecureAcces revocation works end-to-end; independent transports survive chaos; critical policies are mutation-resistant; build/lint/security gates pass; performance targets pass without security weakening; signed packaging/update verified; docs match code; final re-audit finds no fundamental blocker; final verified state is in `main`.
+No unresolved Critical/High release findings; all release P0/P1 complete or evidence-based rejected; normal protected networking cannot escape direct; browser compromise cannot extract long-lived keys or escalate broker capabilities in the supported threat model; Servo required site capabilities pass; Windows/Android paths are proven; SecureAcces revocation works end-to-end; independent transports survive chaos; critical policy/IPC/state logic is mutation-resistant; build/lint/security gates pass; performance targets pass without security weakening; signed release/update flow verified; docs match code; final re-audit finds no fundamental blocker; verified final state is in `main`.
