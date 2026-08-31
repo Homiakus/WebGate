@@ -27,7 +27,7 @@ type GatewayConfig struct {
 type ServerGateway struct {
 	services   *registry.ServiceRegistry
 	devices    *registry.DeviceRegistry
-	authorizer *auth.SecureAccessAuthorizer
+	authorizer auth.ServiceAuthorizer
 	httpClient *http.Client
 	config     GatewayConfig
 }
@@ -35,11 +35,14 @@ type ServerGateway struct {
 func NewServerGateway(
 	services *registry.ServiceRegistry,
 	devices *registry.DeviceRegistry,
-	authorizer *auth.SecureAccessAuthorizer,
+	authorizer auth.ServiceAuthorizer,
 	config GatewayConfig,
 ) *ServerGateway {
 	if config.ProxyTimeout == 0 {
 		config.ProxyTimeout = 15 * time.Second
+	}
+	if authorizer == nil {
+		authorizer = auth.NewUnavailableServiceAuthorizer()
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -62,10 +65,10 @@ func NewServerGateway(
 
 // ServeHTTP handles incoming proxied requests with strict authentication and SSRF filtering.
 func (g *ServerGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.Header.Get("X-WebGate-Session")
+	sessionToken := r.Header.Get("X-WebGate-Session")
 	deviceID := r.Header.Get("X-WebGate-Device")
 
-	if sessionID == "" || deviceID == "" {
+	if sessionToken == "" || deviceID == "" {
 		http.Error(w, "missing session or device authentication context", http.StatusUnauthorized)
 		return
 	}
@@ -94,8 +97,13 @@ func (g *ServerGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqPerm := mapMethodToPermission(r.Method)
-	_, err = g.authorizer.AuthorizeServiceAccess(sessionID, dev, svc, reqPerm)
+	err = g.authorizer.AuthorizeServiceAccess(r.Context(), sessionToken, dev, svc, reqPerm)
 	if err != nil {
+		w.Header().Set("Cache-Control", "no-store")
+		if errors.Is(err, auth.ErrAuthorizationAuthorityUnavailable) {
+			http.Error(w, "authorization authority unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "access denied by security policy", http.StatusForbidden)
 		return
 	}

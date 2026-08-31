@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -29,7 +30,11 @@ type WorkspaceMembership struct {
 	Permissions domain.PermissionBits
 }
 
-// SecureAccessAuthorizer evaluates authorization policies using SecureAcces primitives.
+// SecureAccessAuthorizer is the historical WebGate-owned in-memory surrogate.
+// It remains temporarily for tests and the not-yet-requalified admin prototype.
+// Production data-plane wiring MUST use ServiceAuthorizer and MUST NOT construct
+// this type. T-052 supplies the authoritative SecureAcces provider; T-051 removes
+// the remaining admin-prototype dependency.
 type SecureAccessAuthorizer struct {
 	mu          sync.RWMutex
 	sessions    map[string]*UserSession
@@ -62,16 +67,17 @@ func (a *SecureAccessAuthorizer) SetMembership(userID, workspaceID string, perms
 	a.memberships[key] = perms
 }
 
-// AuthorizeServiceAccess validates session, presented device identity/status,
-// user-to-device ownership, and workspace permission for a service action.
+// AuthorizeServiceAccess is retained as compatibility-only behavior for tests.
+// The production data plane no longer constructs this surrogate.
 func (a *SecureAccessAuthorizer) AuthorizeServiceAccess(
+	_ context.Context,
 	sessionID string,
 	device *domain.Device,
 	service *domain.ProtectedService,
 	requiredPerm domain.PermissionBits,
-) (*UserSession, error) {
+) error {
 	if device == nil || !device.Status.IsAllowedAccess() {
-		return nil, ErrDeviceRevokedOrInactive
+		return ErrDeviceRevokedOrInactive
 	}
 
 	a.mu.RLock()
@@ -79,20 +85,22 @@ func (a *SecureAccessAuthorizer) AuthorizeServiceAccess(
 
 	sess, ok := a.sessions[sessionID]
 	if !ok || time.Now().UTC().After(sess.ExpiresAt) {
-		return nil, ErrSessionExpired
+		return ErrSessionExpired
 	}
 	if sess.DeviceID == "" || sess.DeviceID != device.ID {
-		return nil, ErrSessionDeviceMismatch
+		return ErrSessionDeviceMismatch
 	}
 	if sess.UserID == "" || sess.UserID != device.UserID {
-		return nil, ErrSessionUserDeviceMismatch
+		return ErrSessionUserDeviceMismatch
 	}
 
 	key := sess.UserID + ":" + service.WorkspaceID
 	perms, ok := a.memberships[key]
 	if !ok || !perms.Has(requiredPerm) {
-		return nil, ErrAccessDenied
+		return ErrAccessDenied
 	}
 
-	return sess, nil
+	return nil
 }
+
+var _ ServiceAuthorizer = (*SecureAccessAuthorizer)(nil)

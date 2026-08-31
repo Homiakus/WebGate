@@ -54,15 +54,21 @@ func main() {
 
 	// Release registry starts empty. Only verified build pipeline outputs may be promoted.
 
-	authorizer := auth.NewSecureAccessAuthorizer()
 	delSvc := delivery.NewTelegramDeliveryService(relReg)
-	adminAPI := admin.NewAdminAPI(svcReg, devReg, relReg, delSvc, authorizer)
+	// The historical admin prototype still carries an unused legacy-authorizer
+	// parameter. T-051 removes it when management authorization is requalified.
+	adminAPI := admin.NewAdminAPI(svcReg, devReg, relReg, delSvc, nil)
 	adminAPI.SetConfig(serverCfg)
 	adminAPI.LogAudit(domain.AuditActionServiceCreated, "system", "config", "Bound server config: "+serverCfg.ServerName)
 
-	gw := gateway.NewServerGateway(svcReg, devReg, authorizer, gateway.GatewayConfig{
+	// No authoritative SecureAcces provider is shipped by this public repository
+	// yet. Failing closed here is intentional: T-052 supplies the private,
+	// durable production provider without publishing SecureAcces source.
+	serviceAuthorizer := auth.NewUnavailableServiceAuthorizer()
+	gw := gateway.NewServerGateway(svcReg, devReg, serviceAuthorizer, gateway.GatewayConfig{
 		ProxyTimeout: time.Duration(serverCfg.ProxyTimeoutSecs) * time.Second,
 	})
+	log.Printf("[Безопасность] SecureAcces provider не настроен: /svc/* будет fail-closed (503) до T-052")
 
 	dataMux := http.NewServeMux()
 	dataMux.Handle("/svc/", gw)
