@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+pub mod failover;
+pub mod relay;
+
 use std::net::{IpAddr, SocketAddr};
 
 /// Construction failure for a local protected proxy endpoint.

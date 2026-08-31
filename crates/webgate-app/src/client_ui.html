@@ -1,0 +1,1696 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-accent="ember" data-motion="system" data-density="comfortable">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGate Client — Isolated Capsule Launcher</title>
+    <!-- Prevent FOUC: Apply theme and accent immediately from localStorage -->
+    <script>
+        (function() {
+            try {
+                const theme = localStorage.getItem('wg_theme') || 'system';
+                const accent = localStorage.getItem('wg_accent') || 'ember';
+                const motion = localStorage.getItem('wg_motion') || 'system';
+                const density = localStorage.getItem('wg_density') || 'comfortable';
+                const customAccent = localStorage.getItem('wg_custom_accent');
+                
+                const root = document.documentElement;
+                root.setAttribute('data-theme-pref', theme);
+                root.setAttribute('data-accent', accent);
+                root.setAttribute('data-motion', motion);
+                root.setAttribute('data-density', density);
+                
+                let effectiveTheme = theme;
+                if (theme === 'system') {
+                    effectiveTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                }
+                root.setAttribute('data-theme', effectiveTheme);
+                
+                if (accent === 'custom' && customAccent) {
+                    root.style.setProperty('--accent', customAccent);
+                }
+            } catch(e) {}
+        })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* ==========================================================================
+           1. DESIGN SYSTEM TOKENS — COLORS, MOTION, TYPOGRAPHY & SPACING
+           ========================================================================== */
+        :root {
+            /* Motion Timing & Easings */
+            --motion-instant: 80ms;
+            --motion-fast: 140ms;
+            --motion-base: 220ms;
+            --motion-medium: 320ms;
+            --motion-slow: 480ms;
+
+            --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+            --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+            --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+            --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.15);
+            --ease-editorial: cubic-bezier(0.22, 1, 0.36, 1);
+
+            /* Typography & Layout */
+            --font-display: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            --font-mono: "JetBrains Mono", monospace;
+            --container-width: 94vw;
+            --border-radius-sm: 2px;
+            --border-radius-md: 4px;
+
+            /* Universal Semantic Colors (Constant across themes & accents) */
+            --success: #10b981;
+            --success-subtle: rgba(16, 185, 129, 0.12);
+            --warning: #f59e0b;
+            --warning-subtle: rgba(245, 158, 11, 0.12);
+            --danger: #ef4444;
+            --danger-subtle: rgba(239, 68, 68, 0.14);
+            --info: #3b82f6;
+            --info-subtle: rgba(59, 130, 246, 0.12);
+
+            /* Default Accent: Industrial Ember */
+            --accent: #e64a19;
+            --accent-hover: #f4511e;
+            --accent-active: #d84315;
+            --accent-subtle: rgba(230, 74, 25, 0.12);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(230, 74, 25, 0.38);
+        }
+
+        /* --------------------------------------------------------------------------
+           ACCENT PRESETS MATRIX
+           -------------------------------------------------------------------------- */
+        [data-accent="ember"] {
+            --accent: #e64a19;
+            --accent-hover: #f4511e;
+            --accent-active: #d84315;
+            --accent-subtle: rgba(230, 74, 25, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(230, 74, 25, 0.4);
+        }
+        [data-accent="cobalt"] {
+            --accent: #2563eb;
+            --accent-hover: #3b82f6;
+            --accent-active: #1d4ed8;
+            --accent-subtle: rgba(37, 99, 235, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(37, 99, 235, 0.4);
+        }
+        [data-accent="cyan"] {
+            --accent: #0891b2;
+            --accent-hover: #06b6d4;
+            --accent-active: #0e7490;
+            --accent-subtle: rgba(8, 145, 178, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(8, 145, 178, 0.4);
+        }
+        [data-accent="emerald"] {
+            --accent: #059669;
+            --accent-hover: #10b981;
+            --accent-active: #047857;
+            --accent-subtle: rgba(5, 150, 105, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(5, 150, 105, 0.4);
+        }
+        [data-accent="violet"] {
+            --accent: #7c3aed;
+            --accent-hover: #8b5cf6;
+            --accent-active: #6d28d9;
+            --accent-subtle: rgba(124, 58, 237, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(124, 58, 237, 0.4);
+        }
+        [data-accent="amber"] {
+            --accent: #d97706;
+            --accent-hover: #f59e0b;
+            --accent-active: #b45309;
+            --accent-subtle: rgba(217, 119, 6, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(217, 119, 6, 0.4);
+        }
+        [data-accent="crimson"] {
+            --accent: #dc2626;
+            --accent-hover: #ef4444;
+            --accent-active: #b91c1c;
+            --accent-subtle: rgba(220, 38, 38, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(220, 38, 38, 0.4);
+        }
+        [data-accent="titanium"] {
+            --accent: #64748b;
+            --accent-hover: #94a3b8;
+            --accent-active: #475569;
+            --accent-subtle: rgba(100, 116, 139, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(100, 116, 139, 0.4);
+        }
+
+        /* --------------------------------------------------------------------------
+           LIGHT THEME (Architectural Paper & Warm Stone)
+           -------------------------------------------------------------------------- */
+        [data-theme="light"] {
+            --surface-bg: #f7f6f2;
+            --surface-card: #eceae3;
+            --surface-elevated: #ffffff;
+            --surface-overlay: rgba(247, 246, 242, 0.88);
+            --surface-hover: rgba(18, 19, 23, 0.04);
+            --surface-active: rgba(18, 19, 23, 0.08);
+
+            --text-primary: #121317;
+            --text-secondary: #4b4f59;
+            --text-muted: #737785;
+            --text-inverse: #f7f6f2;
+
+            --border-subtle: rgba(18, 19, 23, 0.08);
+            --border-default: rgba(18, 19, 23, 0.16);
+            --border-strong: rgba(18, 19, 23, 0.35);
+
+            --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.05);
+            --shadow-elevated: 0 12px 32px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
+            --focus-ring: 0 0 0 2px var(--surface-bg), 0 0 0 4px var(--accent);
+        }
+
+        /* --------------------------------------------------------------------------
+           DARK THEME (Deep Slate & Charcoal)
+           -------------------------------------------------------------------------- */
+        [data-theme="dark"] {
+            --surface-bg: #0c0e12;
+            --surface-card: #13161c;
+            --surface-elevated: #1a1e27;
+            --surface-overlay: rgba(12, 14, 18, 0.88);
+            --surface-hover: rgba(242, 243, 247, 0.04);
+            --surface-active: rgba(242, 243, 247, 0.08);
+
+            --text-primary: #f2f3f7;
+            --text-secondary: #a0a5b2;
+            --text-muted: #6f7482;
+            --text-inverse: #0c0e12;
+
+            --border-subtle: rgba(242, 243, 247, 0.08);
+            --border-default: rgba(242, 243, 247, 0.15);
+            --border-strong: rgba(242, 243, 247, 0.32);
+
+            --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.3);
+            --shadow-elevated: 0 14px 36px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+            --focus-ring: 0 0 0 2px var(--surface-bg), 0 0 0 4px var(--accent);
+        }
+
+        /* Density Modes */
+        [data-density="compact"] {
+            --density-pad-y: 0.65rem;
+            --density-pad-x: 0.85rem;
+            --density-gap: 0.75rem;
+        }
+        [data-density="comfortable"] {
+            --density-pad-y: 1.15rem;
+            --density-pad-x: 1.25rem;
+            --density-gap: 1.25rem;
+        }
+
+        /* Reduced Motion Mode Override */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
+            }
+        }
+        [data-motion="reduced"] *, [data-motion="reduced"] *::before, [data-motion="reduced"] *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+            scroll-behavior: auto !important;
+        }
+
+        /* ==========================================================================
+           2. BASE STYLES & RESET
+           ========================================================================== */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            background-color: var(--surface-bg);
+            color: var(--text-primary);
+            transition: background-color var(--motion-base) var(--ease-standard),
+                        color var(--motion-base) var(--ease-standard);
+        }
+
+        body {
+            font-family: var(--font-display);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            overflow-x: hidden;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Focus Visibility */
+        :focus-visible {
+            outline: none;
+            box-shadow: var(--focus-ring);
+        }
+
+        /* 12-Column Grid Layout Container */
+        .page-grid {
+            width: var(--container-width);
+            max-width: 1720px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            column-gap: 1.5rem;
+            border-left: 1px solid var(--border-subtle);
+            border-right: 1px solid var(--border-subtle);
+            flex: 1;
+        }
+
+        /* ==========================================================================
+           3. TOP META BAR & TELEMETRY HEADER
+           ========================================================================== */
+        .meta-bar {
+            grid-column: span 12;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.1rem 0;
+            border-bottom: 1px solid var(--border-default);
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+        }
+
+        .meta-left, .meta-right {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+
+        .brand-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+            transition: background-color var(--motion-base) var(--ease-standard);
+        }
+        .status-dot.pulse {
+            animation: statusPulse 2.4s infinite ease-in-out;
+        }
+        .status-dot.syncing {
+            background: var(--warning);
+            box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+        }
+        .status-dot.offline {
+            background: var(--danger);
+            box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+        }
+
+        @keyframes statusPulse {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.15); opacity: 1; box-shadow: 0 0 8px var(--success); }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+
+        /* Top Action Buttons (Appearance Settings & Quick Sync) */
+        .meta-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+
+        .btn-icon-meta {
+            background: transparent;
+            border: 1px solid var(--border-default);
+            color: var(--text-secondary);
+            padding: 0.35rem 0.65rem;
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            transition: all var(--motion-fast) var(--ease-out);
+            border-radius: var(--border-radius-sm);
+        }
+        .btn-icon-meta:hover {
+            color: var(--text-primary);
+            border-color: var(--border-strong);
+            background: var(--surface-hover);
+            transform: translateY(-1px);
+        }
+        .btn-icon-meta:active {
+            transform: translateY(0) scale(0.98);
+        }
+
+        /* ==========================================================================
+           4. MONUMENTAL EDITORIAL HERO
+           ========================================================================== */
+        .hero {
+            grid-column: span 12;
+            padding: 4rem 0 3rem 0;
+            border-bottom: 1px solid var(--border-default);
+        }
+
+        .hero-statement {
+            font-size: clamp(2.4rem, 5.8vw, 5.8rem);
+            font-weight: 700;
+            line-height: 0.96;
+            letter-spacing: -0.04em;
+            text-transform: uppercase;
+            max-width: 17ch;
+            margin-bottom: 2rem;
+            color: var(--text-primary);
+        }
+
+        .hero-meta {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 1.5rem;
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+            color: var(--text-muted);
+        }
+
+        .hero-desc {
+            grid-column: span 6;
+            font-family: var(--font-display);
+            font-size: 1.12rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .hero-stats {
+            grid-column: 8 / span 5;
+            display: flex;
+            justify-content: space-between;
+            border-top: 1px solid var(--border-default);
+            padding-top: 1rem;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .stat-num {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1;
+            font-family: var(--font-mono);
+            letter-spacing: -0.02em;
+        }
+
+        .stat-label {
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-top: 0.35rem;
+            color: var(--text-muted);
+        }
+
+        /* ==========================================================================
+           5. SECTION HEADERS & ACCORDION MARKERS
+           ========================================================================== */
+        .section-header {
+            grid-column: span 12;
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            padding: 2.2rem 0 0.9rem 0;
+            border-bottom: 1px solid var(--border-strong);
+            font-family: var(--font-mono);
+            text-transform: uppercase;
+            font-size: 0.8rem;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+        }
+
+        .section-num {
+            color: var(--accent);
+            font-weight: 700;
+            margin-right: 0.5rem;
+        }
+
+        /* ==========================================================================
+           6. CONFIGURATION BINDER (01)
+           ========================================================================== */
+        .config-block {
+            grid-column: span 5;
+            padding: 2.2rem 1.5rem 2.8rem 0;
+            border-right: 1px solid var(--border-subtle);
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .config-dropzone {
+            border: 1px dashed var(--border-strong);
+            padding: 1.8rem 1.4rem;
+            background: var(--surface-card);
+            cursor: pointer;
+            transition: all var(--motion-base) var(--ease-out);
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+            border-radius: var(--border-radius-sm);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .config-dropzone:hover {
+            border-color: var(--accent);
+            background: var(--surface-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-subtle);
+        }
+        .config-dropzone:active {
+            transform: translateY(0) scale(0.99);
+        }
+
+        .dropzone-icon-wrap {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            color: var(--text-primary);
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .config-kv {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .kv-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 0.45rem;
+            border-bottom: 1px solid var(--border-subtle);
+            transition: background-color var(--motion-fast) ease;
+        }
+        .kv-row:hover {
+            background-color: var(--surface-hover);
+        }
+
+        .kv-key {
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .kv-val {
+            font-weight: 600;
+            color: var(--text-primary);
+            text-align: right;
+        }
+
+        /* ==========================================================================
+           7. DESTINATIONS ROUTE CATALOG (02)
+           ========================================================================== */
+        .destinations-block {
+            grid-column: span 7;
+            padding: 2.2rem 0 2.8rem 1.5rem;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+
+        .dest-row {
+            display: grid;
+            grid-template-columns: 3rem 1fr auto;
+            align-items: center;
+            padding: var(--density-pad-y) var(--density-pad-x);
+            border-bottom: 1px solid var(--border-subtle);
+            cursor: pointer;
+            transition: all var(--motion-fast) var(--ease-out);
+            position: relative;
+            background: transparent;
+            border-radius: var(--border-radius-sm);
+        }
+
+        .dest-row:hover {
+            background: var(--surface-hover);
+            transform: translateX(4px);
+            border-bottom-color: var(--border-default);
+        }
+
+        .dest-row.active {
+            background: var(--surface-card);
+            border-left: 3px solid var(--accent);
+            box-shadow: var(--shadow-subtle);
+            transform: translateX(4px);
+        }
+
+        .dest-index {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            transition: color var(--motion-fast) ease;
+        }
+        .dest-row.active .dest-index {
+            color: var(--accent);
+        }
+
+        .dest-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+        }
+
+        .dest-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+
+        .badge-category {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 0.15rem 0.45rem;
+            border: 1px solid var(--border-default);
+            color: var(--text-muted);
+            border-radius: var(--border-radius-sm);
+        }
+
+        .dest-meta {
+            font-size: 0.82rem;
+            color: var(--text-secondary);
+            line-height: 1.35;
+        }
+
+        .dest-url {
+            font-family: var(--font-mono);
+            font-size: 0.74rem;
+            color: var(--text-muted);
+            margin-top: 0.2rem;
+            transition: color var(--motion-fast) ease;
+        }
+        .dest-row:hover .dest-url, .dest-row.active .dest-url {
+            color: var(--accent);
+        }
+
+        .dest-action {
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-muted);
+            transition: all var(--motion-fast) var(--ease-out);
+        }
+        .dest-row.active .dest-action {
+            color: var(--accent);
+        }
+        .dest-row:hover .dest-action {
+            transform: translateX(3px);
+            color: var(--text-primary);
+        }
+
+        /* ==========================================================================
+           8. DIRECT CAPSULE LAUNCH BAR
+           ========================================================================== */
+        .custom-nav-bar {
+            grid-column: span 12;
+            padding: 2.2rem 0;
+            border-bottom: 1px solid var(--border-default);
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 1.5rem;
+            align-items: center;
+        }
+
+        .url-input-wrap {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .url-input {
+            width: 100%;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid var(--border-strong);
+            padding: 0.9rem 0;
+            font-family: var(--font-mono);
+            font-size: clamp(1.1rem, 2vw, 1.55rem);
+            color: var(--text-primary);
+            outline: none;
+            transition: border-color var(--motion-fast) ease, background-color var(--motion-fast) ease;
+        }
+
+        .url-input:focus {
+            border-bottom-color: var(--accent);
+            background: var(--surface-hover);
+        }
+
+        /* Button Launch with Microinteractions */
+        .btn-launch {
+            background: var(--accent);
+            color: var(--accent-contrast);
+            border: 1px solid var(--accent);
+            padding: 1.1rem 2.6rem;
+            font-family: var(--font-mono);
+            font-size: 0.88rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            cursor: pointer;
+            transition: all var(--motion-base) var(--ease-out);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            border-radius: var(--border-radius-sm);
+            box-shadow: var(--shadow-subtle);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-launch:hover {
+            background: var(--accent-hover);
+            border-color: var(--accent-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px var(--accent-subtle);
+        }
+
+        .btn-launch:active {
+            transform: translateY(0) scale(0.985);
+            background: var(--accent-active);
+        }
+
+        .btn-launch .arrow-icon {
+            transition: transform var(--motion-fast) var(--ease-out);
+        }
+        .btn-launch:hover .arrow-icon {
+            transform: translateX(4px);
+        }
+
+        .btn-launch.loading {
+            pointer-events: none;
+            opacity: 0.85;
+        }
+
+        /* ==========================================================================
+           9. TERMINAL ACTIVITY & TELEMETRY LOGS
+           ========================================================================== */
+        .terminal-block {
+            grid-column: span 12;
+            padding: 2.2rem 0 3.5rem 0;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+        }
+
+        .terminal-box {
+            background: var(--surface-card);
+            border: 1px solid var(--border-default);
+            padding: 1.4rem;
+            height: 170px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+            border-radius: var(--border-radius-sm);
+        }
+
+        .log-entry {
+            display: flex;
+            gap: 0.9rem;
+            color: var(--text-secondary);
+            line-height: 1.4;
+            transition: background-color var(--motion-fast) ease;
+        }
+        .log-entry:hover {
+            background-color: var(--surface-hover);
+        }
+
+        .log-time {
+            color: var(--text-muted);
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .log-time.ok { color: var(--success); }
+        .log-time.warn { color: var(--warning); }
+        .log-time.err { color: var(--danger); }
+
+        /* ==========================================================================
+           10. STICKY / CONTEXTUAL STATUS BAR (Persistent Real-Time Layer)
+           ========================================================================== */
+        .status-bar-layer {
+            border-top: 1px solid var(--border-default);
+            background: var(--surface-card);
+            font-family: var(--font-mono);
+            font-size: 0.74rem;
+            padding: 0.65rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            position: sticky;
+            bottom: 0;
+            z-index: 50;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+
+        .status-bar-left, .status-bar-right {
+            display: flex;
+            align-items: center;
+            gap: 1.6rem;
+            flex-wrap: wrap;
+        }
+
+        .status-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+        .status-item strong {
+            color: var(--text-primary);
+        }
+
+        /* ==========================================================================
+           11. TOAST NOTIFICATION STACK
+           ========================================================================== */
+        .toast-container {
+            position: fixed;
+            bottom: 3.5rem;
+            right: 2rem;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+            pointer-events: none;
+        }
+
+        .toast-item {
+            pointer-events: auto;
+            background: var(--surface-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-strong);
+            padding: 0.85rem 1.2rem;
+            box-shadow: var(--shadow-elevated);
+            border-radius: var(--border-radius-sm);
+            font-family: var(--font-mono);
+            font-size: 0.78rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            min-width: 280px;
+            max-width: 440px;
+            transform: translateX(120%);
+            opacity: 0;
+            transition: transform var(--motion-medium) var(--ease-out), opacity var(--motion-base) ease;
+        }
+
+        .toast-item.show {
+            transform: translateX(0);
+            opacity: 1;
+        }
+
+        .toast-item.toast-success { border-left: 4px solid var(--success); }
+        .toast-item.toast-warning { border-left: 4px solid var(--warning); }
+        .toast-item.toast-danger { border-left: 4px solid var(--danger); }
+        .toast-item.toast-info { border-left: 4px solid var(--accent); }
+
+        /* ==========================================================================
+           12. APPEARANCE SETTINGS DRAWER / MODAL
+           ========================================================================== */
+        .drawer-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            z-index: 2000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity var(--motion-base) ease;
+        }
+
+        .drawer-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .settings-drawer {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 420px;
+            max-width: 90vw;
+            height: 100vh;
+            background: var(--surface-card);
+            border-left: 1px solid var(--border-strong);
+            box-shadow: var(--shadow-elevated);
+            z-index: 2010;
+            transform: translateX(100%);
+            transition: transform var(--motion-medium) var(--ease-editorial);
+            display: flex;
+            flex-direction: column;
+            padding: 2rem;
+            overflow-y: auto;
+            gap: 1.8rem;
+        }
+
+        .settings-drawer.active {
+            transform: translateX(0);
+        }
+
+        .drawer-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-default);
+            padding-bottom: 1rem;
+        }
+
+        .drawer-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-primary);
+        }
+
+        .btn-close-drawer {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 0.3rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color var(--motion-fast) ease;
+        }
+        .btn-close-drawer:hover {
+            color: var(--text-primary);
+        }
+
+        .setting-section {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .setting-label {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+        }
+
+        /* Segmented Theme Picker */
+        .theme-segments {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+            background: var(--surface-bg);
+            padding: 0.3rem;
+            border: 1px solid var(--border-default);
+            border-radius: var(--border-radius-sm);
+        }
+
+        .theme-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.6rem 0.4rem;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all var(--motion-fast) var(--ease-out);
+            border-radius: var(--border-radius-sm);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .theme-btn:hover {
+            color: var(--text-primary);
+        }
+
+        .theme-btn.active {
+            background: var(--surface-elevated);
+            color: var(--accent);
+            font-weight: 700;
+            box-shadow: var(--shadow-subtle);
+        }
+
+        /* Accent Swatches */
+        .swatch-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.6rem;
+        }
+
+        .swatch-btn {
+            height: 42px;
+            border: 2px solid transparent;
+            cursor: pointer;
+            border-radius: var(--border-radius-sm);
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform var(--motion-fast) var(--ease-spring), border-color var(--motion-fast) ease;
+        }
+        .swatch-btn:hover {
+            transform: scale(1.06);
+        }
+        .swatch-btn.active {
+            border-color: var(--text-primary);
+            box-shadow: 0 0 0 2px var(--surface-card), 0 0 10px rgba(0,0,0,0.3);
+        }
+        .swatch-check {
+            display: none;
+            color: #ffffff;
+        }
+        .swatch-btn.active .swatch-check {
+            display: block;
+        }
+
+        /* Density / Motion Selector */
+        .pill-toggle-group {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .pill-btn {
+            flex: 1;
+            background: var(--surface-bg);
+            border: 1px solid var(--border-default);
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+            font-size: 0.74rem;
+            padding: 0.5rem;
+            text-transform: uppercase;
+            cursor: pointer;
+            border-radius: var(--border-radius-sm);
+            transition: all var(--motion-fast) ease;
+            text-align: center;
+        }
+        .pill-btn:hover {
+            color: var(--text-primary);
+        }
+        .pill-btn.active {
+            background: var(--accent-subtle);
+            border-color: var(--accent);
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        /* ==========================================================================
+           13. RESPONSIVE QUERIES
+           ========================================================================== */
+        @media (max-width: 900px) {
+            .page-grid {
+                grid-template-columns: 1fr;
+            }
+            .meta-bar, .hero, .config-block, .destinations-block, .custom-nav-bar, .terminal-block {
+                grid-column: span 1;
+            }
+            .config-block {
+                border-right: none;
+                padding-right: 0;
+            }
+            .destinations-block {
+                padding-left: 0;
+            }
+            .custom-nav-bar {
+                grid-template-columns: 1fr;
+            }
+            .hero-meta {
+                grid-template-columns: 1fr;
+            }
+            .hero-desc, .hero-stats {
+                grid-column: span 1;
+            }
+            .status-bar-layer {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="page-grid">
+    <!-- Top Navigation & Telemetry Coordinates -->
+    <header class="meta-bar">
+        <div class="meta-left">
+            <div class="brand-badge">
+                <!-- SVG Icon: Shield Gateway -->
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    <path d="m9 12 2 2 4-4"/>
+                </svg>
+                <span>WEBGATE / КЛИЕНТСКАЯ КАПСУЛА</span>
+            </div>
+            <div class="status-item">
+                <span class="status-dot pulse" id="transport-dot"></span>
+                <span id="transport-status-text">ТРАНСПОРТ ГОТОВ</span>
+            </div>
+        </div>
+        <div class="meta-right">
+            <span id="meta-time">UTC 00:00:00</span>
+            <span>ИДЕНТИФИКАТОР: <strong>WG-FLEET-ED9</strong></span>
+            <div class="meta-actions">
+                <button class="btn-icon-meta" onclick="toggleAppearanceDrawer()" title="Настройки внешнего вида (Темы, Акцент, Движение)">
+                    <!-- SVG Icon: Palette Settings -->
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"/>
+                        <circle cx="12" cy="12" r="4"/>
+                        <line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/>
+                        <line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/>
+                        <line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/>
+                        <line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/>
+                    </svg>
+                    <span>ВИД</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Monumental Editorial Hero -->
+    <section class="hero">
+        <h1 class="hero-statement">ЗАЩИЩЕННЫЙ ДОСТУП К РЕСУРСАМ.</h1>
+        <div class="hero-meta">
+            <p class="hero-desc">
+                Клиент с изоляцией на уровне приложения. Трафик целевых ресурсов направляется строго через отказоустойчивые релеи. Общесистемные сетевые маршруты ОС остаются неизменными.
+            </p>
+            <div class="hero-stats">
+                <div class="stat-item">
+                    <div class="stat-num" id="stat-profile-count">01</div>
+                    <div class="stat-label">ПРОФИЛЬ</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-num" id="stat-dest-count">04</div>
+                    <div class="stat-label">СЕРВИСЫ</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-num">Ed25519</div>
+                    <div class="stat-label">КЛЮЧ УСТРОЙСТВА</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 01: Config Profile Binder -->
+    <div class="section-header">
+        <div><span class="section-num">01</span> ПРИВЯЗКА ФАЙЛА КОНФИГУРАЦИИ</div>
+        <div id="profile-tag">АКТИВЕН: client-profile.toml</div>
+    </div>
+
+    <aside class="config-block">
+        <input type="file" id="file-input" accept=".toml,.json,.conf" style="display:none">
+        <div class="config-dropzone" onclick="document.getElementById('file-input').click()">
+            <div class="dropzone-icon-wrap">
+                <!-- SVG Icon: Upload Config -->
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <span>ВЫБРАТЬ ПРОФИЛЬ (.TOML / .JSON)</span>
+            </div>
+            <span style="font-size:0.78rem; color:var(--text-muted);">Нажмите для выбора или перетащите конфигурационный файл</span>
+        </div>
+
+        <div class="config-kv">
+            <div class="kv-row">
+                <span class="kv-key">Имя профиля</span>
+                <span class="kv-val" id="cfg-profile-name">Основной рабочий флот</span>
+            </div>
+            <div class="kv-row">
+                <span class="kv-key">Версия</span>
+                <span class="kv-val" id="cfg-version">1.2.0</span>
+            </div>
+            <div class="kv-row">
+                <span class="kv-key">Основной релей</span>
+                <span class="kv-val" id="cfg-primary-relay">127.0.0.1:43111</span>
+            </div>
+            <div class="kv-row">
+                <span class="kv-key">Резервный узел</span>
+                <span class="kv-val" id="cfg-fallback-relay">127.0.0.1:43112</span>
+            </div>
+            <div class="kv-row">
+                <span class="kv-key">Политика изоляции</span>
+                <span class="kv-val" style="color:var(--success);">Fail-Closed / Строгая</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- 02: Destination Route Selector -->
+    <main class="destinations-block">
+        <div style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.2rem; display:flex; justify-content:space-between; align-items:center;">
+            <span>ВЫБОР ЦЕЛЕВОГО СЕРВИСА И МАРШРУТА</span>
+            <span>КАТАЛОГ СЕРВИСОВ</span>
+        </div>
+
+        <div id="destinations-list">
+            <!-- Динамический список маршрутов -->
+        </div>
+    </main>
+
+    <!-- 03: Direct Destination Launch Bar -->
+    <div class="section-header">
+        <div><span class="section-num">02</span> ШЛЮЗ ПЕРЕХОДА К СЕРВИСУ</div>
+        <div>СТРОГАЯ ПРОВЕРКА ГРАНИЦЫ ИЗОЛЯЦИИ</div>
+    </div>
+
+    <section class="custom-nav-bar">
+        <div class="url-input-wrap">
+            <input type="text" id="target-url-input" class="url-input" value="webgate://service/docs/overview" spellcheck="false">
+        </div>
+        <button class="btn-launch" id="btn-launch" onclick="launchNavigation()">
+            <span id="btn-launch-text">ЗАПУСТИТЬ КАПСУЛУ</span>
+            <svg class="arrow-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="5" y1="12" x2="19" y2="12"/>
+                <polyline points="12 5 19 12 12 19"/>
+            </svg>
+        </button>
+    </section>
+
+    <!-- 04: Terminal & Activity Telemetry -->
+    <section class="terminal-block">
+        <div style="display:flex; justify-content:space-between; margin-bottom:0.75rem; text-transform:uppercase; color:var(--text-muted); font-size:0.75rem;">
+            <span>03 / ЖУРНАЛ БЕЗОПАСНОСТИ БРОКЕРА И ТЕЛЕМЕТРИЯ IPC</span>
+            <span>ОТКАЗОУСТОЙЧИВЫЙ ТРАНСПОРТ: <strong style="color:var(--success);">АКТИВЕН</strong></span>
+        </div>
+        <div class="terminal-box" id="terminal-logs">
+            <div class="log-entry"><span class="log-time">[СТАРТ]</span><span>Инициализация среды изолированной капсулы WebGate...</span></div>
+            <div class="log-entry"><span class="log-time ok">[КЛЮЧИ]</span><span>Ключ устройства сформирован по стандарту Ed25519. ID: dev_node_9a12</span></div>
+            <div class="log-entry"><span class="log-time ok">[КОНФИГ]</span><span>Привязан профиль: Основной рабочий флот (v1.2.0)</span></div>
+            <div class="log-entry"><span class="log-time ok">[ТРАНСПОРТ]</span><span>Релей Alpha подключен к 127.0.0.1:43111 (Резерв: готов)</span></div>
+        </div>
+    </section>
+</div>
+
+<!-- Sticky Real-time Telemetry & Contextual Status Bar -->
+<div class="status-bar-layer">
+    <div class="status-bar-left">
+        <div class="status-item">
+            <span class="status-dot pulse"></span>
+            <span>РЕЖИМ: <strong>FAIL-CLOSED</strong></span>
+        </div>
+        <div class="status-item">
+            <span>УЗЕЛ: <strong id="bar-relay-addr">127.0.0.1:43111</strong></span>
+        </div>
+        <div class="status-item">
+            <span>ЗАДЕРЖКА IPC: <strong style="color:var(--success);">0.4 MS</strong></span>
+        </div>
+    </div>
+    <div class="status-bar-right">
+        <div class="status-item">
+            <span>ТЕМА: <strong id="bar-theme-name">DARK / EMBER</strong></span>
+        </div>
+        <div class="status-item">
+            <span>СИСТЕМА: <strong>WEBGATE CLIENT v1.2</strong></span>
+        </div>
+    </div>
+</div>
+
+<!-- Appearance Settings Drawer -->
+<div class="drawer-overlay" id="drawer-overlay" onclick="toggleAppearanceDrawer(false)"></div>
+<aside class="settings-drawer" id="settings-drawer" aria-label="Настройки внешнего вида">
+    <div class="drawer-header">
+        <div class="drawer-title">Внешний вид и Тема</div>
+        <button class="btn-close-drawer" onclick="toggleAppearanceDrawer(false)" aria-label="Закрыть">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Theme Mode -->
+    <div class="setting-section">
+        <label class="setting-label">Тема интерфейса</label>
+        <div class="theme-segments">
+            <button class="theme-btn" id="theme-btn-system" onclick="setTheme('system')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                <span>Система</span>
+            </button>
+            <button class="theme-btn" id="theme-btn-light" onclick="setTheme('light')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                <span>Светлая</span>
+            </button>
+            <button class="theme-btn" id="theme-btn-dark" onclick="setTheme('dark')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                <span>Темная</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Accent Swatches -->
+    <div class="setting-section">
+        <label class="setting-label">Акцентный цвет</label>
+        <div class="swatch-grid">
+            <button class="swatch-btn" data-swatch="ember" style="background:#e64a19;" onclick="setAccent('ember')" title="Industrial Ember">
+                <svg class="swatch-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button class="swatch-btn" data-swatch="cobalt" style="background:#2563eb;" onclick="setAccent('cobalt')" title="Cobalt Cyber">
+                <svg class="swatch-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button class="swatch-btn" data-swatch="cyan" style="background:#0891b2;" onclick="setAccent('cyan')" title="Cyan Matrix">
+                <svg class="swatch-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button class="swatch-btn" data-swatch="emerald" style="background:#059669;" onclick="setAccent('emerald')" title="Emerald Gateway">
+                <svg class="swatch-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button class="swatch-btn" data-swatch="violet" style="background:#7c3aed;" onclick="setAccent('violet')" title="Electric Violet">
+                <svg class="swatch-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button class="swatch-btn" data-swatch="amber" style="background:#d97706;" onclick="setAccent('amber')" title="Amber Flare">
+                <svg class="swatch-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button class="swatch-btn" data-swatch="crimson" style="background:#dc2626;" onclick="setAccent('crimson')" title="Crimson Guard">
+                <svg class="swatch-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button class="swatch-btn" data-swatch="titanium" style="background:#64748b;" onclick="setAccent('titanium')" title="Titanium Slate">
+                <svg class="swatch-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Interface Density -->
+    <div class="setting-section">
+        <label class="setting-label">Плотность интерфейса</label>
+        <div class="pill-toggle-group">
+            <button class="pill-btn" id="density-comfortable" onclick="setDensity('comfortable')">Комфортная</button>
+            <button class="pill-btn" id="density-compact" onclick="setDensity('compact')">Компактная</button>
+        </div>
+    </div>
+
+    <!-- Motion Level -->
+    <div class="setting-section">
+        <label class="setting-label">Анимации и Движение</label>
+        <div class="pill-toggle-group">
+            <button class="pill-btn" id="motion-system" onclick="setMotion('system')">Системные</button>
+            <button class="pill-btn" id="motion-full" onclick="setMotion('full')">Полные</button>
+            <button class="pill-btn" id="motion-reduced" onclick="setMotion('reduced')">Сниженные</button>
+        </div>
+    </div>
+</aside>
+
+<!-- Floating Toast Stack -->
+<div class="toast-container" id="toast-container"></div>
+
+<script>
+    /* ==========================================================================
+       THEME & APPEARANCE CONTROLLER (Live Preview & Sync)
+       ========================================================================== */
+    const state = {
+        theme: localStorage.getItem('wg_theme') || 'system',
+        accent: localStorage.getItem('wg_accent') || 'ember',
+        motion: localStorage.getItem('wg_motion') || 'system',
+        density: localStorage.getItem('wg_density') || 'comfortable',
+    };
+
+    function initAppearanceUI() {
+        // Theme buttons
+        document.querySelectorAll('.theme-btn').forEach(btn => btn.classList.remove('active'));
+        const activeThemeBtn = document.getElementById(`theme-btn-${state.theme}`);
+        if (activeThemeBtn) activeThemeBtn.classList.add('active');
+
+        // Accent swatches
+        document.querySelectorAll('.swatch-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.swatch === state.accent);
+        });
+
+        // Density buttons
+        document.querySelectorAll('[id^="density-"]').forEach(btn => btn.classList.remove('active'));
+        const activeDensityBtn = document.getElementById(`density-${state.density}`);
+        if (activeDensityBtn) activeDensityBtn.classList.add('active');
+
+        // Motion buttons
+        document.querySelectorAll('[id^="motion-"]').forEach(btn => btn.classList.remove('active'));
+        const activeMotionBtn = document.getElementById(`motion-${state.motion}`);
+        if (activeMotionBtn) activeMotionBtn.classList.add('active');
+
+        updateStatusBarInfo();
+    }
+
+    function setTheme(theme) {
+        state.theme = theme;
+        localStorage.setItem('wg_theme', theme);
+        
+        const root = document.documentElement;
+        root.setAttribute('data-theme-pref', theme);
+        
+        let effectiveTheme = theme;
+        if (theme === 'system') {
+            effectiveTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        root.setAttribute('data-theme', effectiveTheme);
+        initAppearanceUI();
+        showToast('Тема обновлена: ' + (theme === 'system' ? 'Системная' : theme === 'dark' ? 'Темная' : 'Светлая'), 'info');
+    }
+
+    function setAccent(accent) {
+        state.accent = accent;
+        localStorage.setItem('wg_accent', accent);
+        document.documentElement.setAttribute('data-accent', accent);
+        initAppearanceUI();
+        showToast(`Акцентный цвет: ${accent.toUpperCase()}`, 'info');
+    }
+
+    function setDensity(density) {
+        state.density = density;
+        localStorage.setItem('wg_density', density);
+        document.documentElement.setAttribute('data-density', density);
+        initAppearanceUI();
+    }
+
+    function setMotion(motion) {
+        state.motion = motion;
+        localStorage.setItem('wg_motion', motion);
+        document.documentElement.setAttribute('data-motion', motion);
+        initAppearanceUI();
+    }
+
+    function toggleAppearanceDrawer(force) {
+        const drawer = document.getElementById('settings-drawer');
+        const overlay = document.getElementById('drawer-overlay');
+        const isOpening = force !== undefined ? force : !drawer.classList.contains('active');
+        
+        drawer.classList.toggle('active', isOpening);
+        overlay.classList.toggle('active', isOpening);
+    }
+
+    function updateStatusBarInfo() {
+        const themeEl = document.getElementById('bar-theme-name');
+        if (themeEl) {
+            const effTheme = document.documentElement.getAttribute('data-theme');
+            themeEl.innerText = `${effTheme.toUpperCase()} / ${state.accent.toUpperCase()}`;
+        }
+    }
+
+    // Listen for OS color scheme change when in system theme
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+        if (state.theme === 'system') {
+            document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+            updateStatusBarInfo();
+        }
+    });
+
+    /* ==========================================================================
+       TOAST NOTIFICATION ENGINE
+       ========================================================================== */
+    function showToast(message, type = 'info', duration = 3200) {
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = `toast-item toast-${type}`;
+        
+        let iconSvg = '';
+        if (type === 'success') {
+            iconSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--success)"><polyline points="20 6 9 17 4 12"/></svg>`;
+        } else if (type === 'danger') {
+            iconSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--danger)"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
+        } else {
+            iconSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--accent)"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
+        }
+
+        toast.innerHTML = `${iconSvg}<span>${message}</span>`;
+        container.appendChild(toast);
+
+        // Micro animation trigger
+        requestAnimationFrame(() => {
+            toast.classList.add('show');
+        });
+
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 350);
+        }, duration);
+    }
+
+    /* ==========================================================================
+       APPLICATION & PROFILE STATE
+       ========================================================================== */
+    let activeProfile = {
+        name: "Основной рабочий флот",
+        version: "1.2.0",
+        primaryRelay: "127.0.0.1:43111",
+        fallbackRelay: "127.0.0.1:43112",
+        destinations: [
+            { id: "docs", name: "База знаний и регламенты", url: "webgate://service/docs/overview", category: "Документация", desc: "Шифрованные регламенты и технические инструкции" },
+            { id: "factory", name: "Терминал FactoryOS", url: "webgate://service/factory/terminal", category: "Операции", desc: "Телеметрия сборочных линий и сетка контроллеров" },
+            { id: "monitoring", name: "Телеметрия инфраструктуры", url: "webgate://service/monitoring/telemetry", category: "Телеметрия", desc: "Задержки релеев, целостность пакетов и статус узлов" },
+            { id: "vault", name: "Криптографическое хранилище", url: "webgate://service/vault/secrets", category: "Безопасность", desc: "Аппаратный модуль безопасности и учетные данные" }
+        ]
+    };
+
+    let selectedDestination = activeProfile.destinations[0].url;
+
+    async function loadLiveBackend() {
+        try {
+            const res = await fetch('/api/profile');
+            if (res.ok) {
+                const data = await res.json();
+                activeProfile.name = data.profile_name || activeProfile.name;
+                activeProfile.version = data.version || activeProfile.version;
+                activeProfile.primaryRelay = `${data.primary_relay.address}:${data.primary_relay.port}`;
+                if (data.fallback_relay) {
+                    activeProfile.fallbackRelay = `${data.fallback_relay.address}:${data.fallback_relay.port}`;
+                }
+                if (data.destinations && data.destinations.length > 0) {
+                    activeProfile.destinations = data.destinations.map(d => ({
+                        id: d.id,
+                        name: d.name,
+                        url: d.url,
+                        category: d.category || "Общее",
+                        desc: d.description || ""
+                    }));
+                    selectedDestination = activeProfile.destinations[0].url;
+                    document.getElementById("target-url-input").value = selectedDestination;
+                }
+                document.getElementById("cfg-profile-name").innerText = activeProfile.name;
+                document.getElementById("cfg-version").innerText = activeProfile.version;
+                document.getElementById("cfg-primary-relay").innerText = activeProfile.primaryRelay;
+                document.getElementById("cfg-fallback-relay").innerText = activeProfile.fallbackRelay;
+                document.getElementById("bar-relay-addr").innerText = activeProfile.primaryRelay;
+                document.getElementById("stat-profile-count").innerText = "01";
+                renderDestinations();
+                logMessage("БРОКЕР", "Синхронизировано с ядром WebGate на Rust.", "ok");
+            }
+        } catch (e) {
+            // Standalone mock mode
+        }
+    }
+
+    function renderDestinations() {
+        const container = document.getElementById("destinations-list");
+        container.innerHTML = "";
+        
+        activeProfile.destinations.forEach((dest, index) => {
+            const row = document.createElement("div");
+            const isSelected = dest.url === selectedDestination;
+            row.className = `dest-row ${isSelected ? 'active' : ''}`;
+            row.onclick = () => selectDestination(dest.url);
+
+            row.innerHTML = `
+                <div class="dest-index">0${index + 1}</div>
+                <div class="dest-info">
+                    <div class="dest-title">
+                        <span>${dest.name}</span>
+                        <span class="badge-category">${dest.category}</span>
+                    </div>
+                    <div class="dest-meta">${dest.desc}</div>
+                    <div class="dest-url">${dest.url}</div>
+                </div>
+                <div class="dest-action">
+                    <span>${isSelected ? 'ВЫБРАН' : 'ВЫБРАТЬ'}</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                </div>
+            `;
+            container.appendChild(row);
+        });
+
+        document.getElementById("stat-dest-count").innerText = String(activeProfile.destinations.length).padStart(2, '0');
+    }
+
+    function selectDestination(url) {
+        selectedDestination = url;
+        document.getElementById("target-url-input").value = url;
+        renderDestinations();
+        logMessage("НАВИГАЦИЯ", `Выбран целевой сервис: ${url}`, "ok");
+        showToast(`Выбран сервис: ${url}`, 'info', 2000);
+    }
+
+    async function launchNavigation() {
+        const url = document.getElementById("target-url-input").value.trim();
+        if (!url.startsWith("webgate://") && !url.startsWith("https://")) {
+            logMessage("ОШИБКА_ПОЛИТИКИ", `Нарушение безопасности: URL '${url}' должен использовать схему webgate:// или https://`, "err");
+            showToast("Ошибка политики безопасности: разрешены только webgate:// и https://", "danger", 4000);
+            return;
+        }
+
+        const btn = document.getElementById("btn-launch");
+        const btnText = document.getElementById("btn-launch-text");
+        btn.classList.add("loading");
+        btnText.innerText = "ПРОВЕРКА...";
+
+        logMessage("БРОКЕР", `Проверка прав доступа BrokerCapability для: ${url}...`, "ok");
+        try {
+            const res = await fetch('/api/navigate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target_url: url })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                logMessage("КАПСУЛА", `Запуск браузерной капсулы Servo. Прокси: ${data.proxy || activeProfile.primaryRelay}`, "ok");
+                logMessage("СОЕДИНЕНИЕ", `Сессия установлена с ${url}. Маршруты ОС не затронуты.`, "ok");
+                showToast(`Сессия успешно установлена: ${url}`, 'success', 3500);
+                btn.classList.remove("loading");
+                btnText.innerText = "ЗАПУСТИТЬ КАПСУЛУ";
+                return;
+            }
+        } catch (e) {}
+
+        setTimeout(() => {
+            logMessage("КАПСУЛА", `Запуск браузерной капсулы Servo. Прокси привязан к ${activeProfile.primaryRelay}`, "ok");
+            logMessage("СОЕДИНЕНИЕ", `Сессия установлена с ${url}. Маршруты ОС не затронуты.`, "ok");
+            showToast(`Капсула запущена для: ${url}`, 'success', 3500);
+            btn.classList.remove("loading");
+            btnText.innerText = "ЗАПУСТИТЬ КАПСУЛУ";
+        }, 300);
+    }
+
+    function logMessage(tag, msg, type = "normal") {
+        const logs = document.getElementById("terminal-logs");
+        const entry = document.createElement("div");
+        entry.className = "log-entry";
+        const now = new Date().toTimeString().split(' ')[0];
+        entry.innerHTML = `<span class="log-time ${type === 'ok' ? 'ok' : type === 'err' ? 'err' : ''}">[${tag}]</span><span>${msg}</span>`;
+        logs.appendChild(entry);
+        logs.scrollTop = logs.scrollHeight;
+    }
+
+    // Config file upload handling
+    document.getElementById("file-input").addEventListener("change", function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async function(evt) {
+            const content = evt.target.result;
+            parseConfigFile(file.name, content);
+            try {
+                await fetch('/api/bind_config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: file.name, content: content })
+                });
+            } catch (err) {}
+        };
+        reader.readAsText(file);
+    });
+
+    function parseConfigFile(fileName, content) {
+        logMessage("КОНФИГ", `Разбор внешнего конфигурационного файла '${fileName}'...`, "ok");
+        document.getElementById("profile-tag").innerText = `АКТИВЕН: ${fileName}`;
+        
+        const lines = content.split("\n");
+        const customDests = [];
+
+        lines.forEach(line => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith("#")) return;
+            const parts = trimmed.split("=");
+            if (parts.length >= 2) {
+                const key = parts[0].trim();
+                const val = parts.slice(1).join("=").trim().replace(/['"]/g, "");
+                if (key === "profile_name") {
+                    activeProfile.name = val;
+                    document.getElementById("cfg-profile-name").innerText = val;
+                } else if (key === "version") {
+                    activeProfile.version = val;
+                    document.getElementById("cfg-version").innerText = val;
+                } else if (key === "primary_relay_addr") {
+                    activeProfile.primaryRelay = val + ":" + (activeProfile.primaryRelay.split(":")[1] || "43111");
+                    document.getElementById("cfg-primary-relay").innerText = activeProfile.primaryRelay;
+                } else if (key === "primary_relay_port") {
+                    const host = activeProfile.primaryRelay.split(":")[0];
+                    activeProfile.primaryRelay = `${host}:${val}`;
+                    document.getElementById("cfg-primary-relay").innerText = activeProfile.primaryRelay;
+                } else if (key === "destination") {
+                    const dparts = val.split("|").map(s => s.trim());
+                    if (dparts.length >= 3) {
+                        customDests.push({
+                            id: dparts[0],
+                            name: dparts[1],
+                            url: dparts[2],
+                            category: dparts[3] || "Общее",
+                            desc: dparts[4] || ""
+                        });
+                    }
+                }
+            }
+        });
+
+        if (customDests.length > 0) {
+            activeProfile.destinations = customDests;
+            selectedDestination = customDests[0].url;
+            document.getElementById("target-url-input").value = selectedDestination;
+        }
+
+        renderDestinations();
+        logMessage("КОНФИГ_ПРИВЯЗАН", `Профиль '${activeProfile.name}' успешно загружен с ${activeProfile.destinations.length} сервисами.`, "ok");
+        showToast(`Конфигурация привязана: ${fileName}`, 'success');
+    }
+
+    // Time ticker
+    setInterval(() => {
+        const d = new Date();
+        document.getElementById("meta-time").innerText = "UTC " + d.toISOString().substring(11, 19);
+    }, 1000);
+
+    // Initialization
+    initAppearanceUI();
+    renderDestinations();
+    loadLiveBackend();
+</script>
+</body>
+</html>

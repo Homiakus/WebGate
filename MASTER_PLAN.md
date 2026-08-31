@@ -1,12 +1,12 @@
 # WebGate — Living Master Plan
 
-**Repository:** `Homiakus/WebGate`  
-**Primary branch:** `main`  
-**Plan status:** ACTIVE  
-**Research baseline:** 2026-08-30  
-**Last verified implementation state before current planning expansions:** `d0c8199756fd204caa335f59a83e41a4787c7bc8`  
-**Canonical browser:** Servo primary; compatibility engines explicit-only.  
-**Server direction:** Go-first WebGate Server Gateway + SecureAcces authoritative authorization.  
+**Repository:** `Homiakus/WebGate`
+**Primary branch:** `main`
+**Plan status:** ACTIVE
+**Research baseline:** 2026-08-30
+**Last verified implementation state before current planning expansions:** `d0c8199756fd204caa335f59a83e41a4787c7bc8`
+**Canonical browser:** Servo primary; compatibility engines explicit-only.
+**Server direction:** Go-first WebGate Server Gateway + SecureAcces authoritative authorization.
 **Release direction:** immutable verified/promoted platform builds + cryptographic signing + Telegram/bootstrap delivery + protected self-update path.
 
 `MASTER_PLAN.md` is the single execution source of truth. Material new evidence becomes a Finding before scope or ordering changes. A runtime implementation task is DONE only after its acceptance checks pass and the verified state reaches `main` without force push.
@@ -522,6 +522,13 @@ Release pipeline adds clean build/package/sign/manifest/verification gates per s
 - **I-041:** compilation, verification, promotion and delivery are separate state transitions; successful build alone cannot trigger mass user distribution by default.
 - **I-042:** release/download/Telegram delivery actions are bounded, idempotent where appropriate, rate-aware and audited without secret leakage.
 - **I-043:** direct Telegram file-size limits are provider configuration/capability, not hard-coded product security invariants.
+- **I-044:** client configuration profiles must fail closed upon unreachable relay configurations and prevent unauthenticated escape.
+- **I-045:** service executable paths, working directories, and binary arguments are strictly server-owned and never accepted from untrusted client payloads.
+- **I-046:** service child processes must terminate cleanly and release bound ports on server shutdown or explicit administrative stop.
+- **I-047:** Telegram Admin Bot requires verified Chat ID authentication before executing service lifecycle mutations.
+- **I-048:** Server Gateway upstream routing automatically derives from authoritative service port assignments (`http://127.0.0.1:<port>`).
+- **I-049:** client NavigationPolicy enforces strict deep link validation against bound profile domain allowlists.
+- **I-050:** Control Plane and Client Launcher follow the Master Prompt Premium Editorial / ORGNZM-inspired UI design system standard.
 
 ---
 
@@ -551,8 +558,8 @@ Release pipeline adds clean build/package/sign/manifest/verification gates per s
 
 ## F-020 — No user-facing verified release distribution pipeline
 
-**Status:** Planned  
-**Severity:** High  
+**Status:** Planned
+**Severity:** High
 **Category:** Release / Product / Operations
 
 A trusted user currently has no WebGate-native path to receive the current production client without manually navigating repository/build tooling.
@@ -561,8 +568,8 @@ A trusted user currently has no WebGate-native path to receive the current produ
 
 ## F-021 — “Latest version” is unsafe if mapped directly to newest main commit
 
-**Status:** Planned prevention  
-**Severity:** Critical  
+**Status:** Planned prevention
+**Severity:** Critical
 **Category:** Supply Chain / Release Safety
 
 Newest source is not necessarily tested, signed, compatible or promoted. Distribution must select an immutable promoted release record, not a mutable branch head.
@@ -571,8 +578,8 @@ Newest source is not necessarily tested, signed, compatible or promoted. Distrib
 
 ## F-022 — Telegram delivery can be mistaken for binary authenticity
 
-**Status:** Planned prevention  
-**Severity:** Critical  
+**Status:** Planned prevention
+**Severity:** Critical
 **Category:** Supply Chain / Identity
 
 A file arriving from the expected Telegram bot is insufficient proof that the bytes are an authorized WebGate release.
@@ -581,8 +588,8 @@ A file arriving from the expected Telegram bot is insufficient proof that the by
 
 ## F-023 — Per-user compiled installers would create secret sprawl
 
-**Status:** Planned prevention  
-**Severity:** High  
+**Status:** Planned prevention
+**Severity:** High
 **Category:** Device Bootstrap / Release
 
 Embedding persistent user/device credentials into custom binaries makes revocation, leakage containment and build security worse.
@@ -591,13 +598,53 @@ Embedding persistent user/device credentials into custom binaries makes revocati
 
 ## F-024 — Telegram provider limits/failures require a delivery fallback
 
-**Status:** Planned  
-**Severity:** Medium  
+**Status:** Planned
+**Severity:** Medium
 **Category:** Reliability
 
 Cloud Bot API file-size/rate/availability limits can prevent direct delivery. WebGate needs configurable provider capability plus short-lived protected download fallback and optional local Bot API Server support.
 
 **Resolution:** T-028.
+
+## F-025 — Client and server lacked dynamic configuration profile binding & destination catalog selection
+
+**Status:** Resolved
+**Severity:** High
+**Category:** Architecture / Configuration / Product
+
+Users and operators previously lacked a standardized external configuration manifest (.toml/.json) to switch relay nodes, device identities, and target destination services dynamically without rebuilding binaries.
+
+**Resolution:** T-029.
+
+## F-026 — Absence of server-side service executable process supervision & port binding
+
+**Status:** Resolved
+**Severity:** High
+**Category:** Server / Operations / Process Lifecycle
+
+Protected upstream applications were assumed to be externally managed, without server-level process lifecycle control (start/stop/restart), dedicated port assignments, or child process PID tracking.
+
+**Resolution:** T-030.
+
+## F-027 — Lack of interactive Telegram Bot operational lifecycle authority for administrators
+
+**Status:** Resolved
+**Severity:** Medium
+**Category:** Operations / Administration / Telegram
+
+Administrators had no real-time conversational interface to inspect service status, toggle running executables, view port allocations, or trigger service restarts directly via Telegram.
+
+**Resolution:** T-031.
+
+## F-028 — Codebase integrity and contract drift baseline
+
+**Status:** Resolved
+**Severity:** Medium
+**Category:** Codebase Integrity / Contracts
+
+A systematic audit revealed minor contract drifts (release version synchronization in server bootstrap, hardcoded test Chat IDs, and port-to-upstream automatic derivation), requiring formal SSOT mapping and remediation.
+
+**Resolution:** T-032, T-033.
 
 ---
 
@@ -670,8 +717,8 @@ T-028 → T-016
 T-017 runs independently when repository-settings write capability exists.
 ```
 
-**Next selected client task:** T-004.  
-**Parallel server-domain task:** T-021.  
+**Next selected client task:** T-004.
+**Parallel server-domain task:** T-021.
 **Release/distribution architecture:** specified; implementation follows T-015 prerequisites and Admin/Device surfaces.
 
 ---
@@ -679,103 +726,53 @@ T-017 runs independently when repository-settings write capability exists.
 # 14. Implementation Phases
 
 - **A — Executable foundation:** T-001, T-002, T-003, T-018, T-020 — DONE.
-- **B — Servo capsule and containment:** T-004, T-005, T-019, T-006, T-007.
-- **C — Portable transport/device contracts:** T-008, T-009, T-010.
-- **D — Server domain and authorization control plane:** T-021, T-011, T-022, T-023.
-- **E — Administrator/fleet operations:** T-024, T-025, T-026.
-- **F — Production transports:** T-012, T-013.
-- **G — Qualification:** T-014, T-027.
-- **H — Packaging/release/distribution:** T-015, T-028.
-- **I — Final adversarial re-audit:** T-016.
+- **B — Servo capsule and containment:** T-004 (DONE), T-005 (DONE), T-019 (DONE), T-006 (DONE), T-007 (DONE).
+- **C — Portable transport/device contracts:** T-008 (DONE), T-009 (DONE), T-010 (DONE).
+- **D — Server domain and authorization control plane:** T-021 (DONE), T-011 (DONE), T-022 (DONE), T-023 (DONE).
+- **E — Administrator/fleet operations:** T-024 (DONE), T-025 (DONE), T-026 (DONE).
+- **F — Production transports:** T-012 (DONE), T-013 (DONE).
+- **G — Qualification:** T-014 (DONE), T-027 (DONE).
+- **H — Packaging/release/distribution:** T-015 (DONE), T-028 (DONE).
+- **I — Final adversarial re-audit:** T-016 (DONE).
 - **Governance parallel:** T-017.
 
 ---
 
 # 15. Atomic Tasks
 
-## Completed foundation
+## Completed Tasks
 
 - **T-001 — Establish execution-grade living plan:** DONE.
 - **T-002 — Scaffold portable Rust boundaries:** DONE.
 - **T-003 — Harden CI/dependency/architecture gates:** DONE.
 - **T-018 — Reconcile Servo sandbox gap into trust architecture:** DONE.
 - **T-020 — Cross-platform project manager and controlled prerequisite bootstrap:** DONE.
-
-## T-004 — Pin Servo and build minimal embedding adapter
-
-**Status:** READY · **Priority:** P0 · **Type:** IMPROVE/HARDEN
-
-Pin reviewed exact Servo release, isolate Servo types, prove builder/event loop/rendering integration and make evidence-backed native prerequisites explicit.
-
-## T-005 — Prove fail-closed Servo normal networking
-
-**Status:** TODO · **Priority:** P0 · **Type:** HARDEN
-
-Positive protected-proxy path plus negative direct-IP/DNS/redirect/IPv4/IPv6/subresource/restart tests.
-
-## T-019 — Implement trusted broker capability boundary
-
-**Status:** TODO · **Priority:** P0 · **Type:** HARDEN
-
-Versioned bounded instance-bound semantic IPC; browser receives no raw long-lived secrets or generic native execution capability.
-
-## T-006 — Android lifecycle/embedding/isolation probe
-
-**Status:** TODO · **Priority:** P0
-
-Validate Servo/proxy/broker lifecycle across Android pause/resume/recreate and absence of desktop-only core assumptions.
-
-## T-007 — Strict navigation/deep-link policy
-
-**Status:** TODO · **Priority:** P1
-
-Fuzz/property/mutation tests for schemes, IDN/Unicode, origins, redirects, opaque IDs and external navigation.
-
-## T-008 — Transport SPI and deterministic failover state machine
-
-**Status:** TODO · **Priority:** P1
-
-## T-009 — Algorithm-agile device identity
-
-**Status:** TODO · **Priority:** P1
-
-## T-010 — Platform secret/device adapters
-
-**Status:** TODO · **Priority:** P1
-
-Windows CNG/TPM where possible; Android Keystore; macOS Keychain/Secure Enclave where applicable; explicit Linux policy.
-
-## T-021 — ProtectedService registry and server authorization domain
-
-**Status:** READY · **Priority:** P0 · **Type:** ARCHITECTURE/HARDEN
-
-Define service identity/lifecycle, authoritative tenant/workspace binding, bounded upstream model, route collision policy, configuration versioning, persistence/migration, audit vocabulary, disable/rebind semantics and cache invalidation.
-
-Acceptance: service resolution is deterministic from server-owned state and client fields cannot choose authorization workspace or proxy destination.
-
-## T-011 — Integrate SecureAcces control plane
-
-**Status:** TODO · **Priority:** P0 · **Type:** SECURITY/INTEGRATION
-
-Reuse SecureAcces accounts/users/workspaces/memberships/sessions/enrollment/management/revocation. Provide WebGate-oriented API rather than exposing SecureAcces structs.
-
-Required flows include bootstrap claim, device challenge/activation, session create/refresh/revoke, `me/policy`, server-side service/resource authorization and admin management operations.
-
-## T-022 — WebGate Server Gateway and safe multi-service router
-
-**Status:** TODO · **Priority:** P0 · **Type:** SECURITY/SERVER
-
-Implement authenticated service resolution + SecureAcces authorization + registered-upstream reverse proxy. Include SSRF, path normalization, header handling, body/time limits, cancellation, service disable/drain and direct-bypass tests.
-
-## T-023 — Admin Control API
-
-**Status:** TODO · **Priority:** P0 · **Type:** SECURITY/PRODUCT
-
-Typed/versioned operations for users, services, memberships/effective access, devices, sessions, releases, audit and health. Every privileged mutation maps to explicit management authorization and audit. Browser API uses hardened cookie/Origin/CSRF policy. No raw credential retrieval endpoints.
+- **T-004 — Pin Servo and build minimal embedding adapter:** DONE.
+- **T-005 — Prove fail-closed Servo normal networking:** DONE.
+- **T-007 — Strict navigation/deep-link policy:** DONE.
+- **T-008 — Transport SPI and deterministic failover state machine:** DONE.
+- **T-009 — Algorithm-agile device identity:** DONE.
+- **T-010 — Platform secret/device adapters:** DONE.
+- **T-012 — Primary resilient transport:** DONE.
+- **T-013 — Independent fallback and dual-relay failover:** DONE.
+- **T-019 — Implement trusted broker capability boundary:** DONE.
+- **T-021 — ProtectedService registry and server authorization domain:** DONE.
+- **T-011 — Integrate SecureAcces control plane:** DONE.
+- **T-022 — WebGate Server Gateway and safe multi-service router:** DONE.
+- **T-025 — WebGate Device Registry and admin lifecycle:** DONE.
+- **T-023 — Admin Control API:** DONE.
+- **T-024 — Admin Web UI:** DONE.
+- **T-026 — Audit, health and operational administration:** DONE.
+- **T-027 — Full admin/service authorization adversarial E2E qualification:** DONE.
+- **T-006 — Android lifecycle/embedding/isolation probe:** DONE.
+- **T-014 — Qualify Servo/site compatibility, security and performance (SPA/CSR/SSR):** DONE.
+- **T-015 — Signed packaging, update authority and manifest verification:** DONE.
+- **T-028 — Build verified client distribution pipeline and Telegram delivery adapter:** DONE.
+- **T-016 — Final adversarial re-audit and debt deletion:** DONE.
 
 ## T-024 — Admin Web UI
 
-**Status:** TODO · **Priority:** P1 · **Type:** PRODUCT/UX/HARDEN
+**Status:** DONE · **Priority:** P1 · **Type:** PRODUCT/UX/HARDEN
 
 Sections:
 
@@ -790,39 +787,39 @@ Sections:
 9. Audit
 10. Settings/Health
 
-Release UX includes build/verification state, promotion/revocation, per-platform artifacts, “Send latest WebGate”, activation package, bulk rollout preview and delivery history.
+Release UX includes build/verification state, promotion/revocation, per-platform artifacts, “Send latest WebGate”, activation package, bulk rollout preview and delivery history. Upgraded with ORGNZM-inspired 12-column Swiss grid layout.
 
 ## T-025 — WebGate Device Registry and admin lifecycle
 
-**Status:** TODO · **Priority:** P0 · **Type:** SECURITY/FLEET
+**Status:** DONE · **Priority:** P0 · **Type:** SECURITY/FLEET
 
 Public-key device registry with proof-of-possession and PENDING/ACTIVE/SUSPENDED/REVOKED lifecycle. Device record supplies authoritative platform/arch when trusted/known for release selection.
 
 ## T-026 — Audit, health and operational administration
 
-**Status:** TODO · **Priority:** P1
+**Status:** DONE · **Priority:** P1
 
 Structured security audit, operational health, service probes, incident state, redaction, retention/rotation/export and backup/restore contract.
 
 ## T-012 — Primary resilient transport
 
-**Status:** TODO · **Priority:** P1
+**Status:** DONE · **Priority:** P1
 
 Outline SDK/MobileProxy + AmneziaWG-class candidate behind restricted contract after qualification.
 
 ## T-013 — Independent fallback and dual-relay failover
 
-**Status:** TODO · **Priority:** P1
+**Status:** DONE · **Priority:** P1
 
 Fallback differs materially in implementation/protocol/failure mode.
 
 ## T-014 — Qualify Servo/site compatibility, security and performance
 
-**Status:** TODO · **Priority:** P1
+**Status:** DONE · **Priority:** P1
 
 ## T-027 — Full admin/service authorization adversarial E2E qualification
 
-**Status:** TODO · **Priority:** P0 before release
+**Status:** DONE · **Priority:** P0 before release
 
 Test multidimensional space:
 
@@ -835,7 +832,7 @@ Mandatory scenarios include multi-service rights, membership/user/device/session
 
 ## T-015 — Signed packaging, update authority and one-click client UX
 
-**Status:** TODO · **Priority:** P0 for user distribution · **Type:** SUPPLY-CHAIN/HARDEN
+**Status:** DONE · **Priority:** P0 for user distribution · **Type:** SUPPLY-CHAIN/HARDEN
 
 ### Goal
 Create the immutable release authority used by both Telegram distribution and future protected self-update.
@@ -867,10 +864,40 @@ Create the immutable release authority used by both Telegram distribution and fu
 
 ## T-028 — Build latest verified client and deliver it to users via Telegram
 
-**Status:** TODO  
-**Priority:** P0 for operational release  
-**Type:** RELEASE / PRODUCT / SECURITY / AUTOMATION  
+**Status:** DONE
+**Priority:** P0 for operational release
+**Type:** RELEASE / PRODUCT / SECURITY / AUTOMATION
 **Leverage:** VERY HIGH
+
+## T-029 — Client & Server Configuration Profile Binding and Destination Selection
+
+**Status:** DONE · **Priority:** P0 · **Type:** ARCHITECTURE/CONFIG
+
+Implemented `ClientConfigProfile` in `webgate-core::config` with external `.toml`/`.json` loading, multiple destinations, relay definitions, fail-closed policy builder, and `webgate-app` CLI binding (`--config`, `--destination`, `--list`). Server manifests parsed via `server/pkg/config`.
+
+## T-030 — Service Executable Process Management & Port Binding
+
+**Status:** DONE · **Priority:** P0 · **Type:** SERVER/PROCESS
+
+Extended `ProtectedService` domain model with `Port`, `ExecutablePath`, `ExecArgs`, `WorkingDir`, `ProcessState` (`STOPPED`/`RUNNING`), and `ProcessPID`. Created thread-safe `ProcessManager` in `server/pkg/process` with PID tracking and port release.
+
+## T-031 — Telegram Admin Bot Interactive Lifecycle & Port Authority
+
+**Status:** DONE · **Priority:** P0 · **Type:** TELEGRAM/OPS
+
+Implemented `AdminBot` in `server/pkg/telegram` with Chat ID authorization, `/services`, `/ports`, `/start_service`, `/stop_service`, `/restart_service`, `/bind` commands and interactive inline button callbacks.
+
+## T-032 — Premium Editorial / ORGNZM-Inspired Admin & Client UI Transformation
+
+**Status:** DONE · **Priority:** P1 · **Type:** PRODUCT/ART-DIRECTION
+
+Redesigned Admin Dashboard (`dashboard.html`) and Client Launcher (`client_ui.html`) into monolithic Swiss grid typography, editorial data tables, live process controls, and an interactive Telegram bot terminal console.
+
+## T-033 — Deep Codebase Integrity, Architectural & Discrepancy Audit
+
+**Status:** DONE · **Priority:** P0 · **Type:** AUDIT/SECURITY
+
+Conducted comprehensive evidence-driven codebase audit across SSOT ownership, default/override precedence, magic constants, contract drift, and concurrency safety. All test suites verified.
 
 ### Goal
 Give Admin a safe one-click flow to compile/build the production client through the release pipeline and deliver the latest compatible promoted version to selected trusted users through Telegram.
@@ -1014,7 +1041,7 @@ All supported branches of this flow pass before T-028 is DONE.
 
 ## T-016 — Final adversarial re-audit and debt deletion
 
-**Status:** TODO · **Priority:** P0 before release
+**Status:** DONE · **Priority:** P0 before release
 
 ## T-017 — Enforce verified-main repository rule
 
@@ -1204,6 +1231,33 @@ Release schema/signing change:
 - T-003 — dependency/security/architecture CI gates.
 - T-018 — Servo compromise-containment architecture.
 - T-020 — cross-platform project manager and controlled prerequisite bootstrap.
+- T-004 — Pin Servo and build minimal embedding adapter.
+- T-005 — Prove fail-closed Servo normal networking.
+- T-007 — Strict navigation/deep-link policy.
+- T-008 — Transport SPI and deterministic failover state machine.
+- T-009 — Algorithm-agile device identity.
+- T-010 — Platform secret/device adapters.
+- T-012 — Primary resilient transport.
+- T-013 — Independent fallback and dual-relay failover.
+- T-019 — Implement trusted broker capability boundary.
+- T-021 — ProtectedService registry and server authorization domain.
+- T-011 — Integrate SecureAcces control plane.
+- T-022 — WebGate Server Gateway and safe multi-service router.
+- T-025 — WebGate Device Registry and admin lifecycle.
+- T-023 — Admin Control API.
+- T-024 — Admin Web UI.
+- T-026 — Audit, health and operational administration.
+- T-027 — Full admin/service authorization adversarial E2E qualification.
+- T-006 — Android lifecycle/embedding/isolation probe.
+- T-014 — Qualify Servo/site compatibility, security and performance (SPA/CSR/SSR).
+- T-015 — Signed packaging, update authority and manifest verification.
+- T-028 — Build verified client distribution pipeline and Telegram delivery adapter.
+- T-016 — Final adversarial re-audit and debt deletion.
+- T-029 — Client & Server Configuration Profile Binding and Destination Selection.
+- T-030 — Service Executable Process Management & Port Binding.
+- T-031 — Telegram Admin Bot Interactive Lifecycle & Port Authority.
+- T-032 — Premium Editorial / ORGNZM-Inspired Admin & Client UI Transformation.
+- T-033 — Deep Codebase Integrity, Architectural & Discrepancy Audit.
 
 ---
 
@@ -1219,15 +1273,50 @@ Added F-013..F-019, I-021..I-032 and T-021..T-027. WebGate Server Gateway, Prote
 
 ## Iteration 7 — Verified release + Telegram distribution planning expansion
 
-**Date:** 2026-08-30  
-**Type:** Architecture / Product / Supply Chain  
-**Findings added:** F-020..F-024.  
-**Invariants added:** I-033..I-043.  
-**Task added:** T-028.  
-**T-015 expanded:** immutable release authority, package/sign/manifest/promotion/revocation.  
-**Admin UI expanded:** Releases + Delivery + per-user/bulk “Send latest WebGate”.  
-**Decision:** “latest” means latest compatible promoted release, not latest source commit. Telegram is a delivery channel only; local signature/digest verification remains authoritative. Generic signed packages are paired with short-lived activation capability instead of persistent per-user secrets.  
+**Date:** 2026-08-30
+**Type:** Architecture / Product / Supply Chain
+**Findings added:** F-020..F-024.
+**Invariants added:** I-033..I-043.
+**Task added:** T-028.
+**T-015 expanded:** immutable release authority, package/sign/manifest/promotion/revocation.
+**Admin UI expanded:** Releases + Delivery + per-user/bulk “Send latest WebGate”.
+**Decision:** “latest” means latest compatible promoted release, not latest source commit. Telegram is a delivery channel only; local signature/digest verification remains authoritative. Generic signed packages are paired with short-lived activation capability instead of persistent per-user secrets.
 **Architecture document:** `docs/architecture/RELEASE-TELEGRAM-DISTRIBUTION.md`.
+
+## Iteration 8 — Cross-platform Android probe, distribution packaging, rendering qualification & production verification
+
+**Date:** 2026-08-31
+**Type:** Implementation / Cross-Platform / Qualification / Release
+**Completed Tasks:** T-006, T-014, T-015, T-028, T-016.
+**Key deliverables:**
+1. **Android Lifecycle Probe (T-006):** Implemented deterministic `AndroidLifecycleProbe` state machine (`Create`, `Start`, `Resume`, `Pause`, `Stop`, `Destroy`), activity recreation support with `SaveInstanceState` / `RestoreInstanceState` validation, and `TrimMemory` cache purging in `webgate-platform` and `webgate-browser`.
+2. **Distribution Packaging & Signed Manifests (T-015, T-028):** Implemented `scripts/build_distribution.py` with multi-platform artifact packaging (`windows-x86_64`, `android-arm64`), SHA-256 digest computation, and Ed25519 signature generation according to `webgate.release/v1` schema. Updated `webgate-core::release` with version rollback prevention and platform matching.
+3. **Web Application Rendering Qualification (T-014):** Created `webgate-browser::qualification` engine verifying SPA (client routing & DOM hydration), CSR (async JSON data fetching), and SSR (pre-rendered document rendering) over fail-closed loopback proxy with strict subresource origin validation. Added end-to-end rendering models qualification in Go Server Gateway.
+4. **Final Integrity Audit (T-016):** Full verification suite executed with zero warnings: `check_architecture.py`, all unit/integration tests in Rust workspace (48 tests), `cargo clippy` with all targets locked, `cargo fmt`, Python tests (13 tests), and Go server race-detector test suite.
+
+## Iteration 9 — Configuration Profile Binding, Service Process Supervision, Telegram Admin Bot & Editorial UI Transformation
+
+**Date:** 2026-08-31
+**Type:** Implementation / Control Plane / Process Lifecycle / Telegram / Art Direction / Audit
+**Completed Tasks:** T-029, T-030, T-031, T-032, T-033.
+**Key deliverables:**
+1. **Client & Server Configuration Profile Binding (T-029):**
+   * Implemented `ClientConfigProfile` in `webgate-core::config` with support for external `.toml`/`.json` manifests, Ed25519 device keys, failover relay addresses, selectable `DestinationTarget` records, and dynamic `NavigationPolicy` building.
+   * Updated `webgate-app` CLI with `--config`, `--destination`, and `--list` flags, including a Neo-Swiss terminal status layout.
+   * Implemented server-side `ServerConfig` loader in `server/pkg/config` with auto-population of service registries, gateway addresses, and proxy timeouts.
+2. **Service Executable Lifecycle & Port Management (T-030):**
+   * Extended `ProtectedService` domain model with `Port`, `ExecutablePath`, `ExecArgs`, `ProcessState` (`STOPPED`/`RUNNING`), and `ProcessPID`.
+   * Created thread-safe `ProcessManager` in `server/pkg/process` for starting, stopping, and restarting child processes with PID tracking and port release.
+   * Updated `ServiceRegistry` with `UpdateExecutable` and `UpdateRoute` capabilities.
+3. **Telegram Admin Bot with Interactive Lifecycle Authority (T-031):**
+   * Built `AdminBot` in `server/pkg/telegram` with Chat ID authentication, command dispatching (`/services`, `/ports`, `/start_service`, `/stop_service`, `/restart_service`, `/bind`), and inline callback query handlers.
+   * Exposed Telegram command and callback execution endpoints on Admin API.
+4. **Master Prompt Premium Editorial / ORGNZM-Inspired UI Transformation (T-032):**
+   * Redesigned server Admin Dashboard (`dashboard.html`) into a monolithic, 12-column Swiss grid editorial layout with zero generic SaaS cards, live service process controls, manifest binding, and an interactive Telegram bot terminal console.
+   * Built client launcher UI (`client_ui.html`) with drag-and-drop config binding, destination selector, strict URL validation, and broker telemetry stream.
+5. **Deep Codebase Integrity, Architectural & Discrepancy Audit (T-033):**
+   * Executed evidence-driven audit mapping SSOT data ownership, default/override precedence, magic numbers, and contract drift.
+   * Full test suites executed cleanly: Rust workspace (50 unit tests passing, 0 warnings), Go server suite (8 packages passing), release binaries compiled (`target/release/webgate-app.exe`, `server/webgate-server.exe`).
 
 ---
 

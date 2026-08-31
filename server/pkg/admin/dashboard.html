@@ -1,0 +1,2618 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark" data-accent="ember" data-motion="system" data-density="comfortable">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGate Control Plane & Gateway — Панель управления и шлюз доступа</title>
+    <!-- Prevent FOUC: Apply theme and accent immediately from localStorage -->
+    <script>
+        (function() {
+            try {
+                const theme = localStorage.getItem('wg_theme') || 'system';
+                const accent = localStorage.getItem('wg_accent') || 'ember';
+                const motion = localStorage.getItem('wg_motion') || 'system';
+                const density = localStorage.getItem('wg_density') || 'comfortable';
+                const customAccent = localStorage.getItem('wg_custom_accent');
+                
+                const root = document.documentElement;
+                root.setAttribute('data-theme-pref', theme);
+                root.setAttribute('data-accent', accent);
+                root.setAttribute('data-motion', motion);
+                root.setAttribute('data-density', density);
+                
+                let effectiveTheme = theme;
+                if (theme === 'system') {
+                    effectiveTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                }
+                root.setAttribute('data-theme', effectiveTheme);
+                
+                if (accent === 'custom' && customAccent) {
+                    root.style.setProperty('--accent', customAccent);
+                }
+            } catch(e) {}
+        })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* ==========================================================================
+           1. DESIGN SYSTEM TOKENS — COLORS, MOTION, TYPOGRAPHY & SPACING
+           ========================================================================== */
+        :root {
+            /* Motion Timing & Easings */
+            --motion-instant: 80ms;
+            --motion-fast: 140ms;
+            --motion-base: 220ms;
+            --motion-medium: 320ms;
+            --motion-slow: 480ms;
+
+            --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+            --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+            --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+            --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.15);
+            --ease-editorial: cubic-bezier(0.22, 1, 0.36, 1);
+
+            /* Typography & Layout */
+            --font-display: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            --font-mono: "JetBrains Mono", monospace;
+            --container-width: 95vw;
+            --border-radius-sm: 2px;
+            --border-radius-md: 4px;
+
+            /* Universal Semantic Colors */
+            --success: #10b981;
+            --success-subtle: rgba(16, 185, 129, 0.12);
+            --warning: #f59e0b;
+            --warning-subtle: rgba(245, 158, 11, 0.12);
+            --danger: #ef4444;
+            --danger-subtle: rgba(239, 68, 68, 0.14);
+            --info: #3b82f6;
+            --info-subtle: rgba(59, 130, 246, 0.12);
+
+            /* Default Accent: Industrial Ember */
+            --accent: #e64a19;
+            --accent-hover: #f4511e;
+            --accent-active: #d84315;
+            --accent-subtle: rgba(230, 74, 25, 0.12);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(230, 74, 25, 0.38);
+        }
+
+        /* --------------------------------------------------------------------------
+           ACCENT PRESETS MATRIX
+           -------------------------------------------------------------------------- */
+        [data-accent="ember"] {
+            --accent: #e64a19;
+            --accent-hover: #f4511e;
+            --accent-active: #d84315;
+            --accent-subtle: rgba(230, 74, 25, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(230, 74, 25, 0.4);
+        }
+        [data-accent="cobalt"] {
+            --accent: #2563eb;
+            --accent-hover: #3b82f6;
+            --accent-active: #1d4ed8;
+            --accent-subtle: rgba(37, 99, 235, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(37, 99, 235, 0.4);
+        }
+        [data-accent="cyan"] {
+            --accent: #0891b2;
+            --accent-hover: #06b6d4;
+            --accent-active: #0e7490;
+            --accent-subtle: rgba(8, 145, 178, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(8, 145, 178, 0.4);
+        }
+        [data-accent="emerald"] {
+            --accent: #059669;
+            --accent-hover: #10b981;
+            --accent-active: #047857;
+            --accent-subtle: rgba(5, 150, 105, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(5, 150, 105, 0.4);
+        }
+        [data-accent="violet"] {
+            --accent: #7c3aed;
+            --accent-hover: #8b5cf6;
+            --accent-active: #6d28d9;
+            --accent-subtle: rgba(124, 58, 237, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(124, 58, 237, 0.4);
+        }
+        [data-accent="amber"] {
+            --accent: #d97706;
+            --accent-hover: #f59e0b;
+            --accent-active: #b45309;
+            --accent-subtle: rgba(217, 119, 6, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(217, 119, 6, 0.4);
+        }
+        [data-accent="crimson"] {
+            --accent: #dc2626;
+            --accent-hover: #ef4444;
+            --accent-active: #b91c1c;
+            --accent-subtle: rgba(220, 38, 38, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(220, 38, 38, 0.4);
+        }
+        [data-accent="titanium"] {
+            --accent: #64748b;
+            --accent-hover: #94a3b8;
+            --accent-active: #475569;
+            --accent-subtle: rgba(100, 116, 139, 0.14);
+            --accent-contrast: #ffffff;
+            --accent-border: rgba(100, 116, 139, 0.4);
+        }
+
+        /* --------------------------------------------------------------------------
+           LIGHT THEME (Warm Stone & Architectural Paper)
+           -------------------------------------------------------------------------- */
+        [data-theme="light"] {
+            --surface-bg: #f7f6f2;
+            --surface-card: #eceae3;
+            --surface-elevated: #ffffff;
+            --surface-overlay: rgba(247, 246, 242, 0.88);
+            --surface-hover: rgba(18, 19, 23, 0.04);
+            --surface-active: rgba(18, 19, 23, 0.08);
+
+            --text-primary: #121317;
+            --text-secondary: #4b4f59;
+            --text-muted: #737785;
+            --text-inverse: #f7f6f2;
+
+            --border-subtle: rgba(18, 19, 23, 0.08);
+            --border-default: rgba(18, 19, 23, 0.16);
+            --border-strong: rgba(18, 19, 23, 0.35);
+
+            --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.05);
+            --shadow-elevated: 0 12px 32px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
+            --focus-ring: 0 0 0 2px var(--surface-bg), 0 0 0 4px var(--accent);
+        }
+
+        /* --------------------------------------------------------------------------
+           DARK THEME (Deep Slate & Charcoal)
+           -------------------------------------------------------------------------- */
+        [data-theme="dark"] {
+            --surface-bg: #0c0e12;
+            --surface-card: #13161c;
+            --surface-elevated: #1a1e27;
+            --surface-overlay: rgba(12, 14, 18, 0.88);
+            --surface-hover: rgba(242, 243, 247, 0.04);
+            --surface-active: rgba(242, 243, 247, 0.08);
+
+            --text-primary: #f2f3f7;
+            --text-secondary: #a0a5b2;
+            --text-muted: #6f7482;
+            --text-inverse: #0c0e12;
+
+            --border-subtle: rgba(242, 243, 247, 0.08);
+            --border-default: rgba(242, 243, 247, 0.15);
+            --border-strong: rgba(242, 243, 247, 0.32);
+
+            --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.3);
+            --shadow-elevated: 0 14px 36px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+            --focus-ring: 0 0 0 2px var(--surface-bg), 0 0 0 4px var(--accent);
+        }
+
+        /* Density Modes */
+        [data-density="compact"] {
+            --density-pad-y: 0.5rem;
+            --density-pad-x: 0.75rem;
+            --density-gap: 0.75rem;
+        }
+        [data-density="comfortable"] {
+            --density-pad-y: 1rem;
+            --density-pad-x: 1.25rem;
+            --density-gap: 1.25rem;
+        }
+
+        /* Reduced Motion Mode */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
+            }
+        }
+        [data-motion="reduced"] *, [data-motion="reduced"] *::before, [data-motion="reduced"] *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+            scroll-behavior: auto !important;
+        }
+
+        /* ==========================================================================
+           2. BASE STYLES & RESET
+           ========================================================================== */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            background-color: var(--surface-bg);
+            color: var(--text-primary);
+            transition: background-color var(--motion-base) var(--ease-standard),
+                        color var(--motion-base) var(--ease-standard);
+        }
+
+        body {
+            font-family: var(--font-display);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            overflow-x: hidden;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        :focus-visible {
+            outline: none;
+            box-shadow: var(--focus-ring);
+        }
+
+        /* ==========================================================================
+           3. APP SHELL LAYOUT (NAV TABS + MAIN VIEW)
+           ========================================================================== */
+        .app-shell {
+            width: var(--container-width);
+            max-width: 1760px;
+            margin: 0 auto;
+            border-left: 1px solid var(--border-subtle);
+            border-right: 1px solid var(--border-subtle);
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Top System Header */
+        .system-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-default);
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            background: var(--surface-card);
+        }
+
+        .system-bar-left, .system-bar-right {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .brand-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            color: var(--text-primary);
+            font-weight: 700;
+            font-size: 0.85rem;
+            letter-spacing: 0.05em;
+        }
+
+        .dot-pulse {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+            animation: statusPulse 2.4s infinite ease-in-out;
+        }
+
+        @keyframes statusPulse {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.15); opacity: 1; box-shadow: 0 0 8px var(--success); }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+
+        /* Tab Navigation Bar (Horizontal Swiss Tabs) */
+        .nav-tabs-bar {
+            display: flex;
+            align-items: stretch;
+            background: var(--surface-card);
+            border-bottom: 1px solid var(--border-strong);
+            overflow-x: auto;
+            scrollbar-width: thin;
+        }
+
+        .nav-tab-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.9rem 1.3rem;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-secondary);
+            text-decoration: none;
+            border-right: 1px solid var(--border-subtle);
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            transition: all var(--motion-fast) var(--ease-out);
+            white-space: nowrap;
+            user-select: none;
+        }
+
+        .nav-tab-item:hover {
+            color: var(--text-primary);
+            background: var(--surface-hover);
+        }
+
+        .nav-tab-item.active {
+            color: var(--accent);
+            font-weight: 700;
+            background: var(--surface-bg);
+            border-bottom-color: var(--accent);
+        }
+
+        .nav-tab-num {
+            font-size: 0.68rem;
+            opacity: 0.6;
+        }
+
+        .nav-tab-item.active .nav-tab-num {
+            opacity: 1;
+            color: var(--accent);
+        }
+
+        /* Content Area */
+        .main-viewport {
+            flex: 1;
+            padding: 2.2rem 1.5rem 3rem 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .tab-pane {
+            display: none;
+            animation: fadeIn var(--motion-base) var(--ease-out);
+        }
+
+        .tab-pane.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ==========================================================================
+           4. SHARED EDITORIAL UI COMPONENTS
+           ========================================================================== */
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            border-bottom: 1px solid var(--border-strong);
+            padding-bottom: 1rem;
+            margin-bottom: 1.8rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .section-title {
+            font-size: 1.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: -0.02em;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .section-subtitle {
+            font-size: 0.88rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        .btn-action {
+            background: transparent;
+            border: 1px solid var(--border-strong);
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: 0.74rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.55rem 1rem;
+            cursor: pointer;
+            transition: all var(--motion-fast) var(--ease-out);
+            border-radius: var(--border-radius-sm);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-weight: 600;
+        }
+
+        .btn-action:hover {
+            background: var(--text-primary);
+            color: var(--text-inverse);
+            transform: translateY(-1px);
+        }
+        .btn-action:active {
+            transform: translateY(0) scale(0.98);
+        }
+
+        .btn-accent {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--accent-contrast);
+        }
+        .btn-accent:hover {
+            background: var(--accent-hover);
+            border-color: var(--accent-hover);
+            color: #ffffff;
+        }
+
+        .btn-browse {
+            background: var(--surface-elevated);
+            border: 1px solid var(--accent-border);
+            color: var(--accent);
+            padding: 0.35rem 0.65rem;
+            font-size: 0.72rem;
+        }
+        .btn-browse:hover {
+            background: var(--accent);
+            color: var(--accent-contrast);
+        }
+
+        .btn-start { border-color: var(--success); color: var(--success); }
+        .btn-start:hover { background: var(--success); color: #fff; }
+        .btn-stop { border-color: var(--danger); color: var(--danger); }
+        .btn-stop:hover { background: var(--danger); color: #fff; }
+
+        /* Editorial Table */
+        .editorial-table-wrap {
+            border: 1px solid var(--border-default);
+            background: var(--surface-card);
+            border-radius: var(--border-radius-sm);
+            overflow-x: auto;
+        }
+
+        .editorial-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.84rem;
+            text-align: left;
+        }
+
+        .editorial-table th {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            padding: 0.85rem 1rem;
+            border-bottom: 1px solid var(--border-default);
+            background: var(--surface-card);
+        }
+
+        .editorial-table td {
+            padding: 0.9rem 1rem;
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: middle;
+        }
+
+        .editorial-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .editorial-table tr:hover td {
+            background: var(--surface-hover);
+        }
+
+        .slug-tag {
+            font-family: var(--font-mono);
+            font-weight: 600;
+            color: var(--accent);
+            font-size: 0.76rem;
+        }
+
+        .status-badge {
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.25rem 0.55rem;
+            border: 1px solid var(--border-default);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            border-radius: var(--border-radius-sm);
+            font-weight: 600;
+        }
+
+        .status-badge.active, .status-badge.running, .status-badge.promoted {
+            border-color: var(--success);
+            color: var(--success);
+            background: var(--success-subtle);
+        }
+
+        .status-badge.pending, .status-badge.starting, .status-badge.draft {
+            border-color: var(--warning);
+            color: var(--warning);
+            background: var(--warning-subtle);
+        }
+
+        .status-badge.stopped, .status-badge.revoked, .status-badge.disabled, .status-badge.suspended {
+            border-color: var(--border-strong);
+            color: var(--text-muted);
+            background: transparent;
+        }
+
+        /* Form Inputs */
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            margin-bottom: 1.2rem;
+        }
+
+        .form-label {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .form-input {
+            background: var(--surface-card);
+            border: 1px solid var(--border-default);
+            padding: 0.65rem 0.85rem;
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+            color: var(--text-primary);
+            outline: none;
+            transition: all var(--motion-fast) ease;
+            border-radius: var(--border-radius-sm);
+            width: 100%;
+        }
+
+        .form-input:focus {
+            border-color: var(--accent);
+            background: var(--surface-elevated);
+        }
+
+        .input-with-browse {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        /* Cards Grid */
+        .card-grid-2 {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+        }
+
+        .card-grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+        }
+
+        .card-grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1.2rem;
+        }
+
+        .editorial-card {
+            background: var(--surface-card);
+            border: 1px solid var(--border-default);
+            padding: 1.5rem;
+            border-radius: var(--border-radius-sm);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .card-stat-val {
+            font-family: var(--font-mono);
+            font-size: 2.5rem;
+            font-weight: 700;
+            line-height: 1;
+            color: var(--text-primary);
+            letter-spacing: -0.02em;
+        }
+
+        .card-stat-lbl {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+        }
+
+        /* Key-Value Summary */
+        .kv-table {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.65rem;
+        }
+
+        .kv-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 0.4rem;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .kv-key {
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .kv-val {
+            font-weight: 600;
+            color: var(--text-primary);
+            text-align: right;
+        }
+
+        /* ==========================================================================
+           5. TELEGRAM CONSOLE
+           ========================================================================== */
+        .tg-console {
+            background: var(--surface-card);
+            border: 1px solid var(--border-default);
+            height: 380px;
+            overflow-y: auto;
+            padding: 1.2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.9rem;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            border-radius: var(--border-radius-sm);
+        }
+
+        .tg-msg {
+            padding: 0.75rem 1rem;
+            border-left: 3px solid var(--accent);
+            background: var(--surface-elevated);
+            white-space: pre-wrap;
+            line-height: 1.45;
+            border-radius: var(--border-radius-sm);
+            box-shadow: var(--shadow-subtle);
+            color: var(--text-primary);
+        }
+
+        .tg-msg.user {
+            border-left-color: var(--text-muted);
+            background: transparent;
+            color: var(--text-secondary);
+        }
+
+        .tg-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-top: 0.6rem;
+        }
+
+        .tg-inline-btn {
+            background: var(--surface-bg);
+            border: 1px solid var(--border-default);
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            padding: 0.4rem 0.75rem;
+            cursor: pointer;
+            transition: all var(--motion-fast) var(--ease-out);
+            border-radius: var(--border-radius-sm);
+        }
+
+        .tg-inline-btn:hover {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--accent-contrast);
+            transform: translateY(-1px);
+        }
+
+        /* Audit Log */
+        .audit-scrollbox {
+            background: var(--surface-card);
+            border: 1px solid var(--border-default);
+            height: 480px;
+            overflow-y: auto;
+            padding: 1rem;
+            font-family: var(--font-mono);
+            font-size: 0.78rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.55rem;
+            border-radius: var(--border-radius-sm);
+        }
+
+        .audit-item {
+            display: flex;
+            gap: 0.85rem;
+            line-height: 1.4;
+            border-bottom: 1px solid var(--border-subtle);
+            padding-bottom: 0.5rem;
+            color: var(--text-secondary);
+            align-items: baseline;
+        }
+        .audit-item:hover {
+            background-color: var(--surface-hover);
+        }
+
+        .audit-ts { color: var(--text-muted); flex-shrink: 0; }
+        .audit-act { color: var(--accent); font-weight: 600; flex-shrink: 0; }
+
+        /* ==========================================================================
+           6. MODALS
+           ========================================================================== */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(4px);
+            z-index: 3000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-card {
+            background: var(--surface-card);
+            border: 1px solid var(--border-strong);
+            box-shadow: var(--shadow-elevated);
+            width: 580px;
+            max-width: 95vw;
+            border-radius: var(--border-radius-sm);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            animation: modalPop var(--motion-fast) var(--ease-out);
+        }
+
+        @keyframes modalPop {
+            from { opacity: 0; transform: scale(0.96); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.2rem 1.5rem;
+            border-bottom: 1px solid var(--border-default);
+            background: var(--surface-elevated);
+        }
+
+        .modal-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+            overflow-y: auto;
+            max-height: 75vh;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border-default);
+            background: var(--surface-elevated);
+        }
+
+        /* ==========================================================================
+           7. TOAST NOTIFICATION STACK
+           ========================================================================== */
+        .toast-container {
+            position: fixed;
+            bottom: 3.5rem;
+            right: 2rem;
+            z-index: 4000;
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+            pointer-events: none;
+        }
+
+        .toast-item {
+            pointer-events: auto;
+            background: var(--surface-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-strong);
+            padding: 0.85rem 1.2rem;
+            box-shadow: var(--shadow-elevated);
+            border-radius: var(--border-radius-sm);
+            font-family: var(--font-mono);
+            font-size: 0.78rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            min-width: 280px;
+            max-width: 440px;
+            transform: translateX(120%);
+            opacity: 0;
+            transition: transform var(--motion-medium) var(--ease-out), opacity var(--motion-base) ease;
+        }
+
+        .toast-item.show {
+            transform: translateX(0);
+            opacity: 1;
+        }
+
+        .toast-item.toast-success { border-left: 4px solid var(--success); }
+        .toast-item.toast-warning { border-left: 4px solid var(--warning); }
+        .toast-item.toast-danger { border-left: 4px solid var(--danger); }
+        .toast-item.toast-info { border-left: 4px solid var(--accent); }
+
+        /* Sticky Footer Telemetry */
+        .status-bar-layer {
+            border-top: 1px solid var(--border-default);
+            background: var(--surface-card);
+            font-family: var(--font-mono);
+            font-size: 0.74rem;
+            padding: 0.65rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            position: sticky;
+            bottom: 0;
+            z-index: 50;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+
+        .status-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+        .status-item strong { color: var(--text-primary); }
+
+        /* Responsive Layout */
+        @media (max-width: 1024px) {
+            .card-grid-4 { grid-template-columns: repeat(2, 1fr); }
+            .card-grid-3 { grid-template-columns: 1fr; }
+            .card-grid-2 { grid-template-columns: 1fr; }
+            .status-bar-layer { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="app-shell">
+    <!-- Top System Header Bar -->
+    <header class="system-bar">
+        <div class="system-bar-left">
+            <div class="brand-badge">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+                    <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                    <line x1="6" y1="6" x2="6.01" y2="6"/>
+                    <line x1="6" y1="18" x2="6.01" y2="18"/>
+                </svg>
+                <span>WEBGATE / ПАНЕЛЬ УПРАВЛЕНИЯ</span>
+            </div>
+            <div class="status-item">
+                <span class="dot-pulse"></span>
+                <span>ШЛЮЗ АКТИВЕН</span>
+            </div>
+        </div>
+        <div class="system-bar-right">
+            <span id="sys-clock">UTC 00:00:00</span>
+            <span id="gateway-port-tag">ПОРТ: <strong>:8787</strong></span>
+            <button class="btn-action" onclick="switchTab('appearance')" style="padding:0.35rem 0.65rem; font-size:0.72rem;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <circle cx="12" cy="12" r="10"/>
+                    <circle cx="12" cy="12" r="4"/>
+                </svg>
+                <span>ВИД</span>
+            </button>
+            <button class="btn-action btn-accent" onclick="loadAllData()" style="padding:0.35rem 0.75rem; font-size:0.72rem;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                </svg>
+                <span>ОБНОВИТЬ</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Horizontal Navigation Tabs -->
+    <nav class="nav-tabs-bar" aria-label="Разделы панели управления">
+        <a class="nav-tab-item active" data-tab="overview" onclick="switchTab('overview')">
+            <span class="nav-tab-num">01</span>
+            <span>📊 Обзор</span>
+        </a>
+        <a class="nav-tab-item" data-tab="settings" onclick="switchTab('settings')">
+            <span class="nav-tab-num">02</span>
+            <span>⚙️ Настройки сервера</span>
+        </a>
+        <a class="nav-tab-item" data-tab="services" onclick="switchTab('services')">
+            <span class="nav-tab-num">03</span>
+            <span>🔧 Сервисы и Процессы</span>
+        </a>
+        <a class="nav-tab-item" data-tab="devices" onclick="switchTab('devices')">
+            <span class="nav-tab-num">04</span>
+            <span>📱 Устройства</span>
+        </a>
+        <a class="nav-tab-item" data-tab="releases" onclick="switchTab('releases')">
+            <span class="nav-tab-num">05</span>
+            <span>📦 Релизы и Доставка</span>
+        </a>
+        <a class="nav-tab-item" data-tab="telegram" onclick="switchTab('telegram')">
+            <span class="nav-tab-num">06</span>
+            <span>🤖 Telegram Бот</span>
+        </a>
+        <a class="nav-tab-item" data-tab="audit" onclick="switchTab('audit')">
+            <span class="nav-tab-num">07</span>
+            <span>📋 Аудит и Здоровье</span>
+        </a>
+        <a class="nav-tab-item" data-tab="appearance" onclick="switchTab('appearance')">
+            <span class="nav-tab-num">08</span>
+            <span>🎨 Оформление</span>
+        </a>
+    </nav>
+
+    <!-- Main Viewport for Tab Panes -->
+    <main class="main-viewport">
+
+        <!-- ====================================================================
+             TAB 01: ОБЗОР (OVERVIEW)
+             ==================================================================== -->
+        <section class="tab-pane active" id="pane-overview">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">📊 СВОДНЫЙ ОБЗОР СИСТЕМЫ</h2>
+                    <p class="section-subtitle">Статус шлюза, процессов сервисов, устройств парка и доставки обновлений</p>
+                </div>
+            </div>
+
+            <!-- Key Metrics Strip -->
+            <div class="card-grid-4">
+                <div class="editorial-card">
+                    <div class="card-stat-val" id="ov-services-count">03</div>
+                    <div class="card-stat-lbl">ЗАРЕГИСТРИРОВАНО СЕРВИСОВ</div>
+                </div>
+                <div class="editorial-card">
+                    <div class="card-stat-val" style="color:var(--success);" id="ov-running-count">00</div>
+                    <div class="card-stat-lbl">АКТИВНЫХ ПРОЦЕССОВ (RUNNING)</div>
+                </div>
+                <div class="editorial-card">
+                    <div class="card-stat-val" id="ov-devices-count">02</div>
+                    <div class="card-stat-lbl">УСТРОЙСТВ В РЕЕСТРЕ</div>
+                </div>
+                <div class="editorial-card">
+                    <div class="card-stat-val" id="ov-releases-count">01</div>
+                    <div class="card-stat-lbl">АКТИВНЫХ РЕЛИЗОВ</div>
+                </div>
+            </div>
+
+            <!-- Overview Panels -->
+            <div class="card-grid-2" style="margin-top: 1.5rem;">
+                <div class="editorial-card">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700;">Статус Серверного Узла</h3>
+                    <div class="kv-table">
+                        <div class="kv-row">
+                            <span class="kv-key">Имя сервера</span>
+                            <span class="kv-val" id="ov-server-name">WebGate Gateway Node</span>
+                        </div>
+                        <div class="kv-row">
+                            <span class="kv-key">Адрес шлюза</span>
+                            <span class="kv-val" id="ov-listen-addr">:8787</span>
+                        </div>
+                        <div class="kv-row">
+                            <span class="kv-key">Маршруты upstream</span>
+                            <span class="kv-val" style="color:var(--success);">/svc/{slug}/</span>
+                        </div>
+                        <div class="kv-row">
+                            <span class="kv-key">Telegram Бот</span>
+                            <span class="kv-val" style="color:var(--success);">ONLINE (ID: 999001)</span>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:0.6rem; margin-top:0.5rem;">
+                        <button class="btn-action" onclick="switchTab('services')">Управление сервисами →</button>
+                        <button class="btn-action" onclick="switchTab('settings')">Настройки сервера →</button>
+                    </div>
+                </div>
+
+                <div class="editorial-card">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700;">Последние события аудита</h3>
+                    <div id="ov-recent-audit" style="font-family:var(--font-mono); font-size:0.75rem; display:flex; flex-direction:column; gap:0.5rem;">
+                        <!-- Динамический рендер -->
+                    </div>
+                    <button class="btn-action" onclick="switchTab('audit')" style="align-self:flex-start; margin-top:0.5rem;">Полный журнал аудита →</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====================================================================
+             TAB 02: НАСТРОЙКИ СЕРВЕРА (SERVER SETTINGS)
+             ==================================================================== -->
+        <section class="tab-pane" id="pane-settings">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">⚙️ НАСТРОЙКИ СЕРВЕРА И МАНИФЕСТОВ</h2>
+                    <p class="section-subtitle">Параметры сетевого шлюза, транзитных узлов Relay и привязка конфигурации</p>
+                </div>
+                <button class="btn-action btn-accent" onclick="saveServerSettings()">СОХРАНИТЬ НАСТРОЙКИ</button>
+            </div>
+
+            <div class="card-grid-2">
+                <!-- Basic Server Config Form -->
+                <div class="editorial-card">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700;">Основные Параметры Шлюза</h3>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Имя сервера / Ноды</label>
+                        <input type="text" id="set-server-name" class="form-input" placeholder="WebGate Editorial Gateway Node Alpha">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Адрес прослушивания шлюза (Listen Addr)</label>
+                        <input type="text" id="set-listen-addr" class="form-input" placeholder=":8787">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Адрес панели администратора (Admin Addr)</label>
+                        <input type="text" id="set-admin-addr" class="form-input" placeholder="127.0.0.1:8787">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Таймаут проксирования (в секундах)</label>
+                        <input type="number" id="set-proxy-timeout" class="form-input" placeholder="15" min="1" max="300">
+                    </div>
+                </div>
+
+                <!-- Config File Manifest Binding Area -->
+                <div class="editorial-card">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700;">Манифест конфигурации (.toml / .json)</h3>
+                    <p style="font-size:0.8rem; color:var(--text-muted);">
+                        Выберите внешний файл настроек для автоматической синхронизации всех параметров сервера.
+                    </p>
+
+                    <div class="input-with-browse">
+                        <input type="text" id="set-config-path" class="form-input" placeholder="C:/path/to/webgate-server.toml" readonly>
+                        <button class="btn-action btn-browse" onclick="browseServerConfigFile()">📂 ПРОВОДНИК</button>
+                    </div>
+
+                    <input type="file" id="local-config-input" accept=".toml,.json,.conf" style="display:none">
+                    <button class="btn-action" onclick="document.getElementById('local-config-input').click()" style="justify-content:center;">
+                        📤 ЗАГРУЗИТЬ ФАЙЛ С ДИСКА
+                    </button>
+
+                    <div class="kv-table" style="margin-top:0.5rem;">
+                        <div class="kv-row">
+                            <span class="kv-key">Текущий манифест</span>
+                            <span class="kv-val" id="set-bound-manifest-name">webgate-server.toml</span>
+                        </div>
+                        <div class="kv-row">
+                            <span class="kv-key">Супервизор процессов</span>
+                            <span class="kv-val">Менеджер os/exec</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Telegram Bot Settings Card -->
+                <div class="editorial-card" style="grid-column:span 2;">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700; display:flex; align-items:center; gap:0.5rem;">
+                        <span>🤖 НАСТРОЙКИ TELEGRAM АДМИН-БОТА</span>
+                    </h3>
+                    <p style="font-size:0.8rem; color:var(--text-muted);">
+                        Управление интеграцией с Telegram Bot: токен авторизации, разрешенные Chat ID администраторов и параметры доставки артефактов.
+                    </p>
+
+                    <div class="card-grid-2" style="margin-top:0.5rem;">
+                        <div>
+                            <div class="form-group">
+                                <label class="form-label" style="display:flex; justify-content:space-between;">
+                                    <span>Токен Telegram Бота (Bot Token)</span>
+                                    <a href="javascript:void(0)" onclick="toggleTokenVisibility()" style="color:var(--accent); text-decoration:none; font-size:0.7rem;">Показать/Скрыть</a>
+                                </label>
+                                <input type="password" id="set-tg-token" class="form-input" placeholder="123456789:ABCdefGhIJKlmNoPQRstuVWXyz...">
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Авторизованные Chat ID (через запятую)</label>
+                                <input type="text" id="set-tg-chat-ids" class="form-input" placeholder="999001, 12345678">
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="form-group">
+                                <label class="form-label">API Endpoint Telegram</label>
+                                <input type="text" id="set-tg-endpoint" class="form-input" placeholder="https://api.telegram.org">
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Лимит размера файла прямой отправки (MB)</label>
+                                <input type="number" id="set-tg-max-size" class="form-input" placeholder="50" min="1" max="2000">
+                            </div>
+
+                            <div style="display:flex; align-items:center; gap:0.6rem; margin-top:0.5rem;">
+                                <input type="checkbox" id="set-tg-enabled" style="accent-color:var(--accent); width:18px; height:18px; cursor:pointer;" checked>
+                                <label for="set-tg-enabled" class="form-label" style="cursor:pointer; margin-bottom:0;">Включить супервизор Telegram Бота</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Relay Nodes Section -->
+            <div style="margin-top: 2rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700;">Транзитные Relay Ноды</h3>
+                </div>
+                <div class="editorial-table-wrap">
+                    <table class="editorial-table">
+                        <thead>
+                            <tr>
+                                <th>ID НОДЫ</th>
+                                <th>НАЗВАНИЕ УЗЛА</th>
+                                <th>IP АДРЕС</th>
+                                <th>ПОРТ</th>
+                                <th>РОЛЬ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="relay-tbody">
+                            <!-- Динамический рендер -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====================================================================
+             TAB 03: СЕРВИСЫ И ПРОЦЕССЫ (SERVICES & PROCESSES)
+             ==================================================================== -->
+        <section class="tab-pane" id="pane-services">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">🔧 РЕЕСТР СЕРВИСОВ И УПРАВЛЕНИЕ ПРОЦЕССАМИ</h2>
+                    <p class="section-subtitle">Привязка бинарников, выделение портов и управление жизненным циклом (Start / Stop / Restart)</p>
+                </div>
+                <button class="btn-action btn-accent" onclick="openRegisterServiceModal()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    <span>ЗАРЕГИСТРИРОВАТЬ СЕРВИС</span>
+                </button>
+            </div>
+
+            <div class="editorial-table-wrap">
+                <table class="editorial-table">
+                    <thead>
+                        <tr>
+                            <th>№</th>
+                            <th>СЕРВИС И SLUG</th>
+                            <th>ПОРТ</th>
+                            <th>ИСПОЛНЯЕМЫЙ ФАЙЛ (ПУТЬ)</th>
+                            <th>СТАТУС ПРОЦЕССА</th>
+                            <th>УПРАВЛЕНИЕ ЖИЗНЕННЫМ ЦИКЛОМ</th>
+                        </tr>
+                    </thead>
+                    <tbody id="services-tbody">
+                        <!-- Динамический рендер сервисов -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ====================================================================
+             TAB 04: УСТРОЙСТВА (DEVICES)
+             ==================================================================== -->
+        <section class="tab-pane" id="pane-devices">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">📱 РЕЕСТР И БЕЗОПАСНОСТЬ УСТРОЙСТВ</h2>
+                    <p class="section-subtitle">Криптографический реестр рабочих станций и мобильных устройств (Ed25519 PoP)</p>
+                </div>
+                <button class="btn-action btn-accent" onclick="openEnrollDeviceModal()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    <span>ЗАРЕГИСТРИРОВАТЬ УСТРОЙСТВО</span>
+                </button>
+            </div>
+
+            <div class="editorial-table-wrap">
+                <table class="editorial-table">
+                    <thead>
+                        <tr>
+                            <th>ID УСТРОЙСТВА</th>
+                            <th>ПОЛЬЗОВАТЕЛЬ & МЕТКА</th>
+                            <th>ПЛАТФОРМА & АРХИТЕКТУРА</th>
+                            <th>АЛГОРИТМ & КЛЮЧ</th>
+                            <th>СТАТУС</th>
+                            <th>ДЕЙСТВИЯ</th>
+                        </tr>
+                    </thead>
+                    <tbody id="devices-tbody">
+                        <!-- Динамический рендер устройств -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ====================================================================
+             TAB 05: РЕЛИЗЫ И ДОСТАВКА (RELEASES & DELIVERY)
+             ==================================================================== -->
+        <section class="tab-pane" id="pane-releases">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">📦 РЕЛИЗЫ И ДОСТАВКА КЛИЕНТА ЧЕРЕЗ TELEGRAM</h2>
+                    <p class="section-subtitle">Пайплайн версий (Draft → Verify → Promote) и прямая доставка подписанных бинарников</p>
+                </div>
+                <button class="btn-action btn-accent" onclick="openTelegramDispatchModal()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    <span>ОТПРАВИТЬ КЛИЕНТ В TELEGRAM</span>
+                </button>
+            </div>
+
+            <div class="editorial-table-wrap">
+                <table class="editorial-table">
+                    <thead>
+                        <tr>
+                            <th>ВЕРСИЯ</th>
+                            <th>КОММИТ SHA</th>
+                            <th>КАНАЛ</th>
+                            <th>АРТЕФАКТЫ ПЛАТФОРМ</th>
+                            <th>СТАТУС РЕЛИЗА</th>
+                            <th>ДЕЙСТВИЯ</th>
+                        </tr>
+                    </thead>
+                    <tbody id="releases-tbody">
+                        <!-- Динамический рендер релизов -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ====================================================================
+             TAB 06: TELEGRAM БОТ (REAL TELEGRAM CONTROL HUB)
+             ==================================================================== -->
+        <section class="tab-pane" id="pane-telegram">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">🤖 УПРАВЛЕНИЕ РЕАЛЬНЫМ TELEGRAM АДМИН-БОТОМ</h2>
+                    <p class="section-subtitle">Прямое мобильное управление сервисами, портами и процессами через Telegram с интерактивными кнопками и анимацией</p>
+                </div>
+                <div style="display:flex; gap:0.5rem;">
+                    <button class="btn-action" onclick="switchTab('settings')">⚙️ НАСТРОЙКИ ТОКЕНА</button>
+                    <button class="btn-action btn-accent" onclick="testTelegramBroadcast()">🔔 ТЕСТ ОПОВЕЩЕНИЯ</button>
+                </div>
+            </div>
+
+            <!-- Bot Live Status Banner -->
+            <div class="card-grid-2">
+                <div class="editorial-card">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700; display:flex; align-items:center; gap:0.6rem;">
+                        <span id="tg-status-dot" class="dot-pulse"></span>
+                        <span id="tg-status-title">СТАТУС ПОДКЛЮЧЕНИЯ К TELEGRAM</span>
+                    </h3>
+
+                    <div class="kv-table">
+                        <div class="kv-row">
+                            <span class="kv-key">Состояние бота</span>
+                            <span class="kv-val" id="tg-conn-status" style="color:var(--success);">ONLINE</span>
+                        </div>
+                        <div class="kv-row">
+                            <span class="kv-key">Username бота</span>
+                            <span class="kv-val" id="tg-bot-username">@Не указан</span>
+                        </div>
+                        <div class="kv-row">
+                            <span class="kv-key">Режим работы</span>
+                            <span class="kv-val">Long-Polling (Real-time)</span>
+                        </div>
+                        <div class="kv-row">
+                            <span class="kv-key">Авторизованные Chat ID</span>
+                            <span class="kv-val" id="tg-auth-chats">999001</span>
+                        </div>
+                    </div>
+
+                    <div style="margin-top:0.8rem; display:flex; gap:0.6rem; flex-wrap:wrap;">
+                        <a id="tg-open-bot-btn" href="https://t.me/" target="_blank" class="btn-action btn-accent" style="text-decoration:none;">
+                            📱 ОТКРЫТЬ БОТА В TELEGRAM ↗
+                        </a>
+                        <button class="btn-action" onclick="fetchTelegramStatus()">🔄 ОБНОВИТЬ СТАТУС</button>
+                    </div>
+                </div>
+
+                <div class="editorial-card">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700;">Интерактивная клавиатура в Telegram</h3>
+                    <p style="font-size:0.82rem; color:var(--text-muted); line-height:1.5;">
+                        Бот поддерживает постоянную клавиатуру меню и динамические inline-кнопки с анимацией статусов в реальном времени:
+                    </p>
+
+                    <div style="background:var(--surface-bg); border:1px solid var(--border-default); padding:1rem; border-radius:var(--border-radius-sm); font-family:var(--font-mono); font-size:0.75rem;">
+                        <div style="color:var(--text-muted); margin-bottom:0.5rem;">[ КЛАВИАТУРА МЕНЮ В TELEGRAM ]</div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.4rem; margin-bottom:0.6rem;">
+                            <div style="background:var(--surface-card); padding:0.4rem; border:1px solid var(--border-subtle); text-align:center;">📊 Сервисы</div>
+                            <div style="background:var(--surface-card); padding:0.4rem; border:1px solid var(--border-subtle); text-align:center;">⚡ Статус Шлюза</div>
+                            <div style="background:var(--surface-card); padding:0.4rem; border:1px solid var(--border-subtle); text-align:center;">🔌 Порты</div>
+                            <div style="background:var(--surface-card); padding:0.4rem; border:1px solid var(--border-subtle); text-align:center;">ℹ️ Помощь</div>
+                        </div>
+                        <div style="color:var(--text-muted); margin-bottom:0.3rem;">[ INLINE-КНОПКИ ДЕЙСТВИЙ ]</div>
+                        <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+                            <span class="status-badge active">▶ Запуск docs</span>
+                            <span class="status-badge stopped">⏹ Стоп docs</span>
+                            <span class="status-badge pending">🔄 Перезапуск</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Telegram Event Stream Log -->
+            <div style="margin-top:1.8rem;">
+                <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700; margin-bottom:0.8rem;">Лента событий и команд Telegram</h3>
+                <div class="audit-scrollbox" id="tg-events-log" style="height:320px;">
+                    <!-- Динамический рендер событий бота -->
+                </div>
+            </div>
+        </section>
+
+        <!-- ====================================================================
+             TAB 07: АУДИТ И ЗДОРОВЬЕ (AUDIT & HEALTH)
+             ==================================================================== -->
+        <section class="tab-pane" id="pane-audit">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">📋 ЖУРНАЛ АУДИТА И ДИАГНОСТИКА ЗДОРОВЬЯ</h2>
+                    <p class="section-subtitle">Неизменяемый журнал действий операторов и статус подсистем</p>
+                </div>
+                <div style="display:flex; gap:0.5rem;">
+                    <button class="btn-action" onclick="fetchAudit()">ОБНОВИТЬ ЖУРНАЛ</button>
+                </div>
+            </div>
+
+            <div class="card-grid-2">
+                <div class="editorial-card">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700;">Статус Здоровья Системы (/healthz)</h3>
+                    <div class="kv-table">
+                        <div class="kv-row">
+                            <span class="kv-key">Общий статус</span>
+                            <span class="kv-val" style="color:var(--success);" id="hz-status">HEALTHY</span>
+                        </div>
+                        <div class="kv-row">
+                            <span class="kv-key">Временная метка</span>
+                            <span class="kv-val" id="hz-timestamp">--</span>
+                        </div>
+                        <div class="kv-row">
+                            <span class="kv-key">Сервисов в памяти</span>
+                            <span class="kv-val" id="hz-services-ct">--</span>
+                        </div>
+                        <div class="kv-row">
+                            <span class="kv-key">Устройств в реестре</span>
+                            <span class="kv-val" id="hz-devices-ct">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="editorial-card">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700;">События Безопасности</h3>
+                    <p style="font-size:0.8rem; color:var(--text-muted);">
+                        Все критические действия (запуск процессов, изменение маршрутов, отзыв ключей) фиксируются в неизменяемом хранилище.
+                    </p>
+                </div>
+            </div>
+
+            <div style="margin-top:1.5rem;">
+                <h3 style="font-size:1rem; text-transform:uppercase; font-weight:700; margin-bottom:0.8rem;">Лента Аудита</h3>
+                <div class="audit-scrollbox" id="audit-logs">
+                    <!-- Записи журнала -->
+                </div>
+            </div>
+        </section>
+
+        <!-- ====================================================================
+             TAB 08: ОФОРМЛЕНИЕ (APPEARANCE)
+             ==================================================================== -->
+        <section class="tab-pane" id="pane-appearance">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">🎨 НАСТРОЙКИ ВНЕШНЕГО ВИДА И ТЕМЫ</h2>
+                    <p class="section-subtitle">Выбор темы, палитры акцентов, плотности макета и анимации</p>
+                </div>
+            </div>
+
+            <div class="card-grid-2">
+                <!-- Theme Select -->
+                <div class="editorial-card">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700;">Тема оформления</h3>
+                    <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:0.5rem;">
+                        <button class="btn-action" id="theme-btn-system" onclick="setTheme('system')">Системная</button>
+                        <button class="btn-action" id="theme-btn-light" onclick="setTheme('light')">Светлая</button>
+                        <button class="btn-action" id="theme-btn-dark" onclick="setTheme('dark')">Темная</button>
+                    </div>
+
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700; margin-top:1.5rem;">Плотность интерфейса</h3>
+                    <div style="display:flex; gap:0.5rem;">
+                        <button class="btn-action" id="density-comfortable" onclick="setDensity('comfortable')">Комфортная</button>
+                        <button class="btn-action" id="density-compact" onclick="setDensity('compact')">Компактная</button>
+                    </div>
+
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700; margin-top:1.5rem;">Анимации</h3>
+                    <div style="display:flex; gap:0.5rem;">
+                        <button class="btn-action" id="motion-system" onclick="setMotion('system')">Системные</button>
+                        <button class="btn-action" id="motion-full" onclick="setMotion('full')">Полные</button>
+                        <button class="btn-action" id="motion-reduced" onclick="setMotion('reduced')">Сниженные</button>
+                    </div>
+                </div>
+
+                <!-- Accent Color Palette -->
+                <div class="editorial-card">
+                    <h3 style="font-size:1.1rem; text-transform:uppercase; font-weight:700;">Акцентная Палитра</h3>
+                    <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:0.75rem;">
+                        <button class="btn-action" onclick="setAccent('ember')" style="background:#e64a19; color:#fff; border:none; justify-content:center;">Ember</button>
+                        <button class="btn-action" onclick="setAccent('cobalt')" style="background:#2563eb; color:#fff; border:none; justify-content:center;">Cobalt</button>
+                        <button class="btn-action" onclick="setAccent('cyan')" style="background:#0891b2; color:#fff; border:none; justify-content:center;">Cyan</button>
+                        <button class="btn-action" onclick="setAccent('emerald')" style="background:#059669; color:#fff; border:none; justify-content:center;">Emerald</button>
+                        <button class="btn-action" onclick="setAccent('violet')" style="background:#7c3aed; color:#fff; border:none; justify-content:center;">Violet</button>
+                        <button class="btn-action" onclick="setAccent('amber')" style="background:#d97706; color:#fff; border:none; justify-content:center;">Amber</button>
+                        <button class="btn-action" onclick="setAccent('crimson')" style="background:#dc2626; color:#fff; border:none; justify-content:center;">Crimson</button>
+                        <button class="btn-action" onclick="setAccent('titanium')" style="background:#64748b; color:#fff; border:none; justify-content:center;">Titanium</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+</div>
+
+<!-- ==========================================================================
+     MODALS
+     ========================================================================== -->
+
+<!-- Register Service Modal -->
+<div class="modal-overlay" id="modal-register-service">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h3 class="modal-title">Регистрация Сервиса</h3>
+            <button class="btn-action" onclick="closeModal('modal-register-service')" style="padding:0.2rem 0.5rem; border:none;">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Название сервиса</label>
+                <input type="text" id="reg-svc-name" class="form-input" placeholder="База знаний компании">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Slug (путь шлюза /svc/{slug}/)</label>
+                <input type="text" id="reg-svc-slug" class="form-input" placeholder="docs">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Выделенный порт</label>
+                <input type="number" id="reg-svc-port" class="form-input" placeholder="8084" value="8084">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Исполняемый файл (Executable Path)</label>
+                <div class="input-with-browse">
+                    <input type="text" id="reg-svc-exec" class="form-input" placeholder="./bin/docs-server.exe">
+                    <button class="btn-action btn-browse" onclick="browseExecutable('reg-svc-exec')">📂 ОБЗОР...</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Рабочая директория (Working Directory)</label>
+                <div class="input-with-browse">
+                    <input type="text" id="reg-svc-workdir" class="form-input" placeholder="./bin">
+                    <button class="btn-action btn-browse" onclick="browseExecutable('reg-svc-workdir')">📂 ОБЗОР...</button>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-action" onclick="closeModal('modal-register-service')">ОТМЕНА</button>
+            <button class="btn-action btn-accent" onclick="submitRegisterService()">ЗАРЕГИСТРИРОВАТЬ</button>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Service Modal -->
+<div class="modal-overlay" id="modal-edit-service">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h3 class="modal-title">Параметры Сервиса</h3>
+            <button class="btn-action" onclick="closeModal('modal-edit-service')" style="padding:0.2rem 0.5rem; border:none;">✕</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="edit-svc-id">
+            <div class="form-group">
+                <label class="form-label">Название</label>
+                <input type="text" id="edit-svc-name" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Slug</label>
+                <input type="text" id="edit-svc-slug" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Порт</label>
+                <input type="number" id="edit-svc-port" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Исполняемый файл</label>
+                <div class="input-with-browse">
+                    <input type="text" id="edit-svc-exec" class="form-input">
+                    <button class="btn-action btn-browse" onclick="browseExecutable('edit-svc-exec')">📂 ОБЗОР...</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Рабочая директория</label>
+                <div class="input-with-browse">
+                    <input type="text" id="edit-svc-workdir" class="form-input">
+                    <button class="btn-action btn-browse" onclick="browseExecutable('edit-svc-workdir')">📂 ОБЗОР...</button>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-action" style="color:var(--danger); border-color:var(--danger); margin-right:auto;" onclick="deleteCurrentService()">УДАЛИТЬ СЕРВИС</button>
+            <button class="btn-action" onclick="closeModal('modal-edit-service')">ОТМЕНА</button>
+            <button class="btn-action btn-accent" onclick="submitEditService()">СОХРАНИТЬ</button>
+        </div>
+    </div>
+</div>
+
+<!-- Enroll Device Modal -->
+<div class="modal-overlay" id="modal-enroll-device">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h3 class="modal-title">Регистрация Устройства</h3>
+            <button class="btn-action" onclick="closeModal('modal-enroll-device')" style="padding:0.2rem 0.5rem; border:none;">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">ID устройства</label>
+                <input type="text" id="dev-id" class="form-input" placeholder="dev_workstation_beta">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Пользователь (User ID)</label>
+                <input type="text" id="dev-user-id" class="form-input" placeholder="usr_alexander">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Метка устройства</label>
+                <input type="text" id="dev-label" class="form-input" placeholder="Инженерный ноутбук (Windows 11)">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Платформа</label>
+                <select id="dev-platform" class="form-input">
+                    <option value="windows">Windows</option>
+                    <option value="android">Android</option>
+                    <option value="linux">Linux</option>
+                    <option value="macos">macOS</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Архитектура</label>
+                <select id="dev-arch" class="form-input">
+                    <option value="x86_64">x86_64</option>
+                    <option value="arm64">arm64</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Публичный ключ (Ed25519 Hex)</label>
+                <input type="text" id="dev-pubkey" class="form-input" placeholder="e0a4f5b210c4987163ef908123abcdef">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-action" onclick="closeModal('modal-enroll-device')">ОТМЕНА</button>
+            <button class="btn-action btn-accent" onclick="submitEnrollDevice()">ЗАРЕГИСТРИРОВАТЬ</button>
+        </div>
+    </div>
+</div>
+
+<!-- Telegram Dispatch Modal -->
+<div class="modal-overlay" id="modal-tg-dispatch">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h3 class="modal-title">Отправка Клиента через Telegram</h3>
+            <button class="btn-action" onclick="closeModal('modal-tg-dispatch')" style="padding:0.2rem 0.5rem; border:none;">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Получатель (User ID)</label>
+                <input type="text" id="tg-send-user" class="form-input" placeholder="usr_admin_dave" value="usr_admin_dave">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Платформа</label>
+                <select id="tg-send-platform" class="form-input">
+                    <option value="windows">Windows (x86_64)</option>
+                    <option value="android">Android (arm64)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Архитектура</label>
+                <select id="tg-send-arch" class="form-input">
+                    <option value="x86_64">x86_64</option>
+                    <option value="arm64">arm64</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-action" onclick="closeModal('modal-tg-dispatch')">ОТМЕНА</button>
+            <button class="btn-action btn-accent" onclick="submitTelegramDispatch()">ОТПРАВИТЬ СЕЙЧАС</button>
+        </div>
+    </div>
+</div>
+
+<!-- Sticky Real-time Telemetry Status Bar -->
+<div class="status-bar-layer">
+    <div class="system-bar-left">
+        <div class="status-item">
+            <span class="dot-pulse"></span>
+            <span>СТАТУС ШЛЮЗА: <strong>RUNNING</strong></span>
+        </div>
+        <div class="status-item">
+            <span>АДРЕС: <strong>127.0.0.1:8787</strong></span>
+        </div>
+        <div class="status-item">
+            <span>МАРШРУТЫ: <strong style="color:var(--success);">/svc/{slug}/</strong></span>
+        </div>
+    </div>
+    <div class="system-bar-right">
+        <div class="status-item">
+            <span>АКТИВНАЯ ВКЛАДКА: <strong id="bar-active-tab">ОБЗОР</strong></span>
+        </div>
+        <div class="status-item">
+            <span>ТЕМА: <strong id="bar-theme-name">DARK / EMBER</strong></span>
+        </div>
+    </div>
+</div>
+
+<!-- Floating Toast Stack -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ==========================================================================
+     SCRIPTS & STATE ENGINE
+     ========================================================================== -->
+<script>
+    /* ==========================================================================
+       TAB ROUTING & NAVIGATION
+       ========================================================================== */
+    const tabs = ['overview', 'settings', 'services', 'devices', 'releases', 'telegram', 'audit', 'appearance'];
+
+    function switchTab(tabName) {
+        if (!tabs.includes(tabName)) tabName = 'overview';
+
+        // Update nav items
+        document.querySelectorAll('.nav-tab-item').forEach(item => {
+            item.classList.toggle('active', item.dataset.tab === tabName);
+        });
+
+        // Update tab panes
+        document.querySelectorAll('.tab-pane').forEach(pane => {
+            pane.classList.remove('active');
+        });
+        const activePane = document.getElementById(`pane-${tabName}`);
+        if (activePane) activePane.classList.add('active');
+
+        // Update bottom bar
+        const barTab = document.getElementById('bar-active-tab');
+        if (barTab) barTab.innerText = tabName.toUpperCase();
+
+        // Update hash
+        window.location.hash = tabName;
+    }
+
+    window.addEventListener('hashchange', () => {
+        const hash = window.location.hash.replace('#', '');
+        if (hash && tabs.includes(hash)) {
+            switchTab(hash);
+        }
+    });
+
+    /* ==========================================================================
+       MODAL CONTROLLERS
+       ========================================================================== */
+    function openModal(modalId) {
+        const el = document.getElementById(modalId);
+        if (el) el.classList.add('active');
+    }
+
+    function closeModal(modalId) {
+        const el = document.getElementById(modalId);
+        if (el) el.classList.remove('active');
+    }
+
+    function openRegisterServiceModal() {
+        document.getElementById('reg-svc-name').value = '';
+        document.getElementById('reg-svc-slug').value = '';
+        document.getElementById('reg-svc-port').value = '8084';
+        document.getElementById('reg-svc-exec').value = '';
+        document.getElementById('reg-svc-workdir').value = '';
+        openModal('modal-register-service');
+    }
+
+    function openEnrollDeviceModal() {
+        openModal('modal-enroll-device');
+    }
+
+    function openTelegramDispatchModal() {
+        openModal('modal-tg-dispatch');
+    }
+
+    /* ==========================================================================
+       NATIVE OS FILE EXPLORER BROWSER API
+       ========================================================================== */
+    async function browseExecutable(targetInputId) {
+        showToast("Открытие проводника операционной системы...", "info", 2000);
+        try {
+            const res = await fetch('/api/admin/fs/browse-file', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: "Выберите исполняемый файл или папку" })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                if (data.path) {
+                    const inputEl = document.getElementById(targetInputId);
+                    if (inputEl) inputEl.value = data.path;
+                    showToast(`Выбран путь: ${data.path}`, "success", 3000);
+                } else if (data.cancelled) {
+                    showToast("Выбор файла отменен", "info", 1500);
+                }
+            } else {
+                showToast("Серверный проводник недоступен", "warning");
+            }
+        } catch (e) {
+            showToast("Ошибка вызова проводника: " + e.message, "danger");
+        }
+    }
+
+    async function browseServerConfigFile() {
+        showToast("Открытие проводника для выбора манифеста...", "info", 2000);
+        try {
+            const res = await fetch('/api/admin/fs/browse-file', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: "Выберите файл конфигурации (.toml / .json)" })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                if (data.path) {
+                    document.getElementById('set-config-path').value = data.path;
+                    // Bind to server
+                    const bindRes = await fetch('/api/admin/config/bind', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ config_path: data.path })
+                    });
+                    if (bindRes.ok) {
+                        showToast(`Манифест успешно привязан: ${data.path}`, "success");
+                        await loadAllData();
+                    }
+                }
+            }
+        } catch (e) {
+            showToast("Ошибка выбора манифеста: " + e.message, "danger");
+        }
+    }
+
+    /* ==========================================================================
+       BACKEND DATA INTEGRATION
+       ========================================================================== */
+    let currentServices = [];
+    let currentDevices = [];
+    let currentReleases = [];
+    let currentConfig = {};
+
+    async function loadAllData() {
+        await Promise.all([
+            fetchConfig(),
+            fetchServices(),
+            fetchDevices(),
+            fetchReleases(),
+            fetchAudit(),
+            fetchHealth(),
+            fetchTelegramStatus()
+        ]);
+        showToast("Данные панели управления синхронизированы", "success", 1800);
+    }
+
+    function toggleTokenVisibility() {
+        const input = document.getElementById('set-tg-token');
+        if (input.type === 'password') {
+            input.type = 'text';
+        } else {
+            input.type = 'password';
+        }
+    }
+
+    async function fetchConfig() {
+        try {
+            const res = await fetch('/api/admin/config');
+            if (res.ok) {
+                currentConfig = await res.json();
+                // Settings tab
+                document.getElementById('set-server-name').value = currentConfig.server_name || '';
+                document.getElementById('set-listen-addr').value = currentConfig.listen_addr || '';
+                document.getElementById('set-admin-addr').value = currentConfig.admin_addr || '';
+                document.getElementById('set-proxy-timeout').value = currentConfig.proxy_timeout_seconds || 15;
+                document.getElementById('set-tg-token').value = currentConfig.telegram_bot_token || '';
+                document.getElementById('set-tg-enabled').checked = currentConfig.telegram_bot_enabled !== false;
+                document.getElementById('set-tg-chat-ids').value = currentConfig.telegram_admin_chat_ids ? currentConfig.telegram_admin_chat_ids.join(', ') : '999001';
+                document.getElementById('set-tg-endpoint').value = currentConfig.telegram_api_endpoint || 'https://api.telegram.org';
+                document.getElementById('set-tg-max-size').value = currentConfig.telegram_max_file_size_mb || 50;
+
+                if (currentConfig.config_path) {
+                    document.getElementById('set-config-path').value = currentConfig.config_path;
+                    document.getElementById('set-bound-manifest-name').innerText = currentConfig.config_path;
+                }
+                // Overview tab
+                document.getElementById('ov-server-name').innerText = currentConfig.server_name || 'WebGate Gateway';
+                document.getElementById('ov-listen-addr').innerText = currentConfig.listen_addr || ':8787';
+
+                renderRelayNodes(currentConfig.relay_nodes || []);
+            }
+        } catch (e) {}
+    }
+
+    function renderRelayNodes(nodes) {
+        const tbody = document.getElementById('relay-tbody');
+        tbody.innerHTML = '';
+        if (nodes.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Нет настроенных Relay нод</td></tr>`;
+            return;
+        }
+        nodes.forEach(n => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="font-family:var(--font-mono); font-weight:600;">${n.id}</td>
+                <td>${n.name}</td>
+                <td style="font-family:var(--font-mono);">${n.address}</td>
+                <td style="font-family:var(--font-mono);">${n.port}</td>
+                <td><span class="status-badge ${n.role === 'primary' ? 'active' : 'stopped'}">${n.role.toUpperCase()}</span></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function saveServerSettings() {
+        const chatIdsStr = document.getElementById('set-tg-chat-ids').value.trim();
+        const chatIds = chatIdsStr ? chatIdsStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)) : [];
+
+        const payload = {
+            server_name: document.getElementById('set-server-name').value.trim(),
+            listen_addr: document.getElementById('set-listen-addr').value.trim(),
+            admin_addr: document.getElementById('set-admin-addr').value.trim(),
+            proxy_timeout_seconds: parseInt(document.getElementById('set-proxy-timeout').value) || 15,
+            telegram_bot_token: document.getElementById('set-tg-token').value.trim(),
+            telegram_bot_enabled: document.getElementById('set-tg-enabled').checked,
+            telegram_admin_chat_ids: chatIds,
+            telegram_api_endpoint: document.getElementById('set-tg-endpoint').value.trim(),
+            telegram_max_file_size_mb: parseInt(document.getElementById('set-tg-max-size').value) || 50
+        };
+
+        const res = await fetch('/api/admin/config/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+            showToast("Настройки сервера и Telegram Бота успешно сохранены", "success");
+            await loadAllData();
+        } else {
+            showToast("Ошибка сохранения настроек", "danger");
+        }
+    }
+
+    /* --------------------------------------------------------------------------
+       SERVICES CONTROLLER
+       -------------------------------------------------------------------------- */
+    async function fetchServices() {
+        try {
+            const res = await fetch('/api/admin/services');
+            if (res.ok) {
+                currentServices = await res.json();
+                renderServices();
+                document.getElementById('ov-services-count').innerText = String(currentServices.length).padStart(2, '0');
+                const runningCt = currentServices.filter(s => s.process_state === 'RUNNING').length;
+                document.getElementById('ov-running-count').innerText = String(runningCt).padStart(2, '0');
+            }
+        } catch (e) {}
+    }
+
+    function renderServices() {
+        const tbody = document.getElementById('services-tbody');
+        tbody.innerHTML = '';
+
+        currentServices.forEach((svc, idx) => {
+            const isRunning = svc.process_state === 'RUNNING';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="font-family:var(--font-mono); color:var(--text-muted);">${String(idx+1).padStart(2, '0')}</td>
+                <td>
+                    <div style="font-weight:600; color:var(--text-primary);">${svc.name}</div>
+                    <div class="slug-tag">/svc/${svc.slug}/</div>
+                </td>
+                <td style="font-family:var(--font-mono);">${svc.port || 8080}</td>
+                <td>
+                    <div class="input-with-browse">
+                        <input type="text" class="form-input" id="svc-exec-${svc.id}" value="${svc.executable_path || ''}" placeholder="./bin/app.exe" style="padding:0.4rem 0.6rem; font-size:0.75rem;">
+                        <button class="btn-action btn-browse" onclick="browseExecutable('svc-exec-${svc.id}')">📂</button>
+                    </div>
+                </td>
+                <td>
+                    <span class="status-badge ${isRunning ? 'running' : 'stopped'}">
+                        ${isRunning ? `▶ PID ${svc.process_pid}` : '⏹ ОСТАНОВЛЕН'}
+                    </span>
+                </td>
+                <td>
+                    <div style="display:flex; gap:0.35rem; flex-wrap:wrap;">
+                        ${isRunning ? 
+                            `<button class="btn-action btn-stop" onclick="stopProcess('${svc.id}')">СТОП</button>
+                             <button class="btn-action" onclick="restartProcess('${svc.id}')">ПЕРЕЗАПУСК</button>` :
+                            `<button class="btn-action btn-start" onclick="startProcess('${svc.id}')">СТАРТ</button>`
+                        }
+                        <button class="btn-action" onclick="saveInlineService('${svc.id}')">СОХРАНИТЬ</button>
+                        <button class="btn-action" onclick="openEditServiceModal('${svc.id}')">✏️</button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function startProcess(serviceId) {
+        showToast(`Запуск процесса ${serviceId}...`, "info", 1800);
+        const res = await fetch('/api/admin/services/process/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ service_id: serviceId })
+        });
+        if (res.ok) {
+            showToast(`Процесс ${serviceId} запущен`, "success");
+            await loadAllData();
+        } else {
+            const err = await res.text();
+            showToast("Ошибка запуска: " + err, "danger", 4500);
+        }
+    }
+
+    async function stopProcess(serviceId) {
+        showToast(`Остановка процесса ${serviceId}...`, "info", 1800);
+        const res = await fetch('/api/admin/services/process/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ service_id: serviceId })
+        });
+        if (res.ok) {
+            showToast(`Процесс ${serviceId} остановлен`, "warning");
+            await loadAllData();
+        } else {
+            showToast("Ошибка остановки", "danger");
+        }
+    }
+
+    async function restartProcess(serviceId) {
+        showToast(`Перезапуск процесса ${serviceId}...`, "info", 1800);
+        const res = await fetch('/api/admin/services/process/restart', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ service_id: serviceId })
+        });
+        if (res.ok) {
+            showToast(`Процесс ${serviceId} перезапущен`, "success");
+            await loadAllData();
+        } else {
+            showToast("Ошибка перезапуска", "danger");
+        }
+    }
+
+    async function saveInlineService(serviceId) {
+        const execPath = document.getElementById(`svc-exec-${serviceId}`).value.trim();
+        const svc = currentServices.find(s => s.id === serviceId);
+        if (!svc) return;
+
+        const res = await fetch('/api/admin/services/exec', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                service_id: serviceId,
+                port: svc.port,
+                executable_path: execPath
+            })
+        });
+        if (res.ok) {
+            showToast(`Исполняемый файл для ${serviceId} обновлен`, "success");
+            await loadAllData();
+        }
+    }
+
+    async function submitRegisterService() {
+        const name = document.getElementById('reg-svc-name').value.trim();
+        const slug = document.getElementById('reg-svc-slug').value.trim();
+        const port = parseInt(document.getElementById('reg-svc-port').value) || 8080;
+        const execPath = document.getElementById('reg-svc-exec').value.trim();
+        const workDir = document.getElementById('reg-svc-workdir').value.trim();
+
+        if (!name || !slug) {
+            showToast("Укажите имя и slug сервиса", "warning");
+            return;
+        }
+
+        const res = await fetch('/api/admin/services', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                id: 'svc_' + slug,
+                name: name,
+                slug: slug,
+                port: port,
+                executable_path: execPath,
+                working_dir: workDir,
+                upstream_url: `http://127.0.0.1:${port}`,
+                status: 'active'
+            })
+        });
+
+        if (res.ok) {
+            closeModal('modal-register-service');
+            showToast(`Сервис '${name}' зарегистрирован`, "success");
+            await loadAllData();
+        } else {
+            showToast("Ошибка регистрации сервиса", "danger");
+        }
+    }
+
+    function openEditServiceModal(serviceId) {
+        const svc = currentServices.find(s => s.id === serviceId);
+        if (!svc) return;
+
+        document.getElementById('edit-svc-id').value = svc.id;
+        document.getElementById('edit-svc-name').value = svc.name || '';
+        document.getElementById('edit-svc-slug').value = svc.slug || '';
+        document.getElementById('edit-svc-port').value = svc.port || 8080;
+        document.getElementById('edit-svc-exec').value = svc.executable_path || '';
+        document.getElementById('edit-svc-workdir').value = svc.working_dir || '';
+        openModal('modal-edit-service');
+    }
+
+    async function submitEditService() {
+        const id = document.getElementById('edit-svc-id').value;
+        const name = document.getElementById('edit-svc-name').value.trim();
+        const slug = document.getElementById('edit-svc-slug').value.trim();
+        const port = parseInt(document.getElementById('edit-svc-port').value) || 8080;
+        const execPath = document.getElementById('edit-svc-exec').value.trim();
+        const workDir = document.getElementById('edit-svc-workdir').value.trim();
+
+        const res = await fetch('/api/admin/services/update-full', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                id: id,
+                name: name,
+                slug: slug,
+                port: port,
+                executable_path: execPath,
+                working_dir: workDir
+            })
+        });
+
+        if (res.ok) {
+            closeModal('modal-edit-service');
+            showToast("Параметры сервиса обновлены", "success");
+            await loadAllData();
+        } else {
+            showToast("Ошибка обновления сервиса", "danger");
+        }
+    }
+
+    async function deleteCurrentService() {
+        const id = document.getElementById('edit-svc-id').value;
+        if (!confirm(`Удалить сервис ${id} из реестра?`)) return;
+
+        const res = await fetch('/api/admin/services/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ service_id: id })
+        });
+
+        if (res.ok) {
+            closeModal('modal-edit-service');
+            showToast(`Сервис ${id} удален`, "warning");
+            await loadAllData();
+        }
+    }
+
+    /* --------------------------------------------------------------------------
+       DEVICES CONTROLLER
+       -------------------------------------------------------------------------- */
+    async function fetchDevices() {
+        try {
+            const res = await fetch('/api/admin/devices');
+            if (res.ok) {
+                currentDevices = await res.json();
+                renderDevices();
+                document.getElementById('ov-devices-count').innerText = String(currentDevices.length).padStart(2, '0');
+            }
+        } catch (e) {}
+    }
+
+    function renderDevices() {
+        const tbody = document.getElementById('devices-tbody');
+        tbody.innerHTML = '';
+        if (currentDevices.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">Нет зарегистрированных устройств</td></tr>`;
+            return;
+        }
+
+        currentDevices.forEach(dev => {
+            const isRevoked = dev.status === 'REVOKED';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="font-family:var(--font-mono); font-weight:600;">${dev.id}</td>
+                <td>
+                    <div style="font-weight:600;">${dev.label || dev.id}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono);">${dev.user_id}</div>
+                </td>
+                <td style="font-family:var(--font-mono);">${dev.platform} / ${dev.architecture}</td>
+                <td style="font-family:var(--font-mono); font-size:0.75rem;">${dev.algorithm} (${dev.public_key_hex ? dev.public_key_hex.substring(0, 10) + '...' : '--'})</td>
+                <td><span class="status-badge ${dev.status.toLowerCase()}">${dev.status}</span></td>
+                <td>
+                    ${isRevoked ? 
+                        `<button class="btn-action" onclick="updateDeviceStatus('${dev.id}', 'ACTIVE')">АКТИВИРОВАТЬ</button>` :
+                        `<button class="btn-action btn-stop" onclick="revokeDevice('${dev.id}')">ОТОЗВАТЬ КЛЮЧ</button>`
+                    }
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function submitEnrollDevice() {
+        const payload = {
+            id: document.getElementById('dev-id').value.trim(),
+            user_id: document.getElementById('dev-user-id').value.trim(),
+            label: document.getElementById('dev-label').value.trim(),
+            platform: document.getElementById('dev-platform').value,
+            architecture: document.getElementById('dev-arch').value,
+            public_key_hex: document.getElementById('dev-pubkey').value.trim(),
+            algorithm: 'Ed25519'
+        };
+
+        if (!payload.id || !payload.user_id) {
+            showToast("Укажите ID устройства и пользователя", "warning");
+            return;
+        }
+
+        const res = await fetch('/api/admin/devices/enroll', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+            closeModal('modal-enroll-device');
+            showToast(`Устройство '${payload.id}' зарегистрировано`, "success");
+            await loadAllData();
+        } else {
+            showToast("Ошибка регистрации устройства", "danger");
+        }
+    }
+
+    async function revokeDevice(deviceId) {
+        if (!confirm(`Отозвать доступ для устройства ${deviceId}?`)) return;
+        const res = await fetch('/api/admin/devices/revoke', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_id: deviceId })
+        });
+        if (res.ok) {
+            showToast(`Устройство ${deviceId} отозвано`, "warning");
+            await loadAllData();
+        }
+    }
+
+    async function updateDeviceStatus(deviceId, status) {
+        const res = await fetch('/api/admin/devices/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_id: deviceId, status: status })
+        });
+        if (res.ok) {
+            showToast(`Статус устройства ${deviceId} обновлен: ${status}`, "success");
+            await loadAllData();
+        }
+    }
+
+    /* --------------------------------------------------------------------------
+       RELEASES & TELEGRAM DISPATCH CONTROLLER
+       -------------------------------------------------------------------------- */
+    async function fetchReleases() {
+        try {
+            const res = await fetch('/api/admin/releases');
+            if (res.ok) {
+                currentReleases = await res.json();
+                renderReleases();
+                document.getElementById('ov-releases-count').innerText = String(currentReleases.length).padStart(2, '0');
+            }
+        } catch (e) {}
+    }
+
+    function renderReleases() {
+        const tbody = document.getElementById('releases-tbody');
+        tbody.innerHTML = '';
+        if (currentReleases.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">Нет релизов в реестре</td></tr>`;
+            return;
+        }
+
+        currentReleases.forEach(rel => {
+            const artList = rel.artifacts ? rel.artifacts.map(a => `<span class="slug-tag">${a.platform} (${a.file_name})</span>`).join(', ') : 'None';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="font-family:var(--font-mono); font-weight:700;">v${rel.version}</td>
+                <td style="font-family:var(--font-mono); font-size:0.75rem;">${rel.source_commit || '--'}</td>
+                <td><span class="status-badge active">${rel.channel}</span></td>
+                <td>${artList}</td>
+                <td><span class="status-badge ${rel.status.toLowerCase()}">${rel.status}</span></td>
+                <td>
+                    <div style="display:flex; gap:0.35rem;">
+                        ${rel.status === 'DRAFT' ? `<button class="btn-action" onclick="verifyRelease('${rel.version}')">ВЕРИФИЦИРОВАТЬ</button>` : ''}
+                        ${rel.status === 'VERIFIED' ? `<button class="btn-action btn-accent" onclick="promoteRelease('${rel.version}')">ПРОМОТИРОВАТЬ</button>` : ''}
+                        ${rel.status !== 'REVOKED' ? `<button class="btn-action btn-stop" onclick="revokeRelease('${rel.version}')">ОТОЗВАТЬ</button>` : ''}
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function verifyRelease(version) {
+        const res = await fetch('/api/admin/releases/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ version: version })
+        });
+        if (res.ok) {
+            showToast(`Релиз v${version} верифицирован`, "success");
+            await loadAllData();
+        }
+    }
+
+    async function promoteRelease(version) {
+        const res = await fetch('/api/admin/releases/promote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ version: version })
+        });
+        if (res.ok) {
+            showToast(`Релиз v${version} промотирован для всех клиентов`, "success");
+            await loadAllData();
+        }
+    }
+
+    async function revokeRelease(version) {
+        if (!confirm(`Отозвать релиз v${version}?`)) return;
+        const res = await fetch('/api/admin/releases/revoke', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ version: version })
+        });
+        if (res.ok) {
+            showToast(`Релиз v${version} отозван`, "warning");
+            await loadAllData();
+        }
+    }
+
+    async function submitTelegramDispatch() {
+        const userId = document.getElementById('tg-send-user').value.trim();
+        const platform = document.getElementById('tg-send-platform').value;
+        const arch = document.getElementById('tg-send-arch').value;
+
+        showToast(`Отправка клиента для ${userId} (${platform})...`, "info");
+        const res = await fetch('/api/admin/delivery/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: userId,
+                platform: platform,
+                architecture: arch
+            })
+        });
+
+        if (res.ok) {
+            const receipt = await res.json();
+            closeModal('modal-tg-dispatch');
+            showToast(`Пакет отправлен в Telegram! ID доставки: ${receipt.delivery_id}`, "success", 4000);
+            await loadAllData();
+        } else {
+            const err = await res.text();
+            showToast("Ошибка доставки: " + err, "danger", 4000);
+        }
+    }
+
+    /* --------------------------------------------------------------------------
+       REAL TELEGRAM BOT CONTROLLER
+       -------------------------------------------------------------------------- */
+    async function fetchTelegramStatus() {
+        try {
+            const res = await fetch('/api/admin/telegram/status');
+            if (res.ok) {
+                const status = await res.json();
+                const connEl = document.getElementById('tg-conn-status');
+                const userEl = document.getElementById('tg-bot-username');
+                const authEl = document.getElementById('tg-auth-chats');
+                const dotEl = document.getElementById('tg-status-dot');
+                const openBtn = document.getElementById('tg-open-bot-btn');
+
+                if (status.connected && status.bot_username) {
+                    connEl.innerText = `ONLINE (@${status.bot_username})`;
+                    connEl.style.color = "var(--success)";
+                    userEl.innerText = `@${status.bot_username} (${status.bot_name || ''})`;
+                    dotEl.style.background = "var(--success)";
+                    openBtn.href = status.bot_link || `https://t.me/${status.bot_username}`;
+                    openBtn.style.display = "inline-flex";
+                } else if (status.has_token) {
+                    connEl.innerText = "ПОДКЛЮЧЕНИЕ К TELEGRAM...";
+                    connEl.style.color = "var(--warning)";
+                    dotEl.style.background = "var(--warning)";
+                } else {
+                    connEl.innerText = "ОЖИДАЕТ ТОКЕН БОТА";
+                    connEl.style.color = "var(--text-muted)";
+                    userEl.innerText = "Токен не задан (укажите в Настройках)";
+                    dotEl.style.background = "var(--text-muted)";
+                    openBtn.style.display = "none";
+                }
+
+                if (status.authorized_chats) {
+                    authEl.innerText = status.authorized_chats.join(', ');
+                }
+
+                // Render events
+                const eventsBox = document.getElementById('tg-events-log');
+                eventsBox.innerHTML = '';
+                if (!status.recent_events || status.recent_events.length === 0) {
+                    eventsBox.innerHTML = `<div style="color:var(--text-muted); padding:1rem; text-align:center;">Нет входящих событий Telegram. Отправьте команду /start боту в Telegram.</div>`;
+                } else {
+                    status.recent_events.slice().reverse().forEach(ev => {
+                        const item = document.createElement('div');
+                        item.className = 'audit-item';
+                        const time = ev.timestamp ? ev.timestamp.substring(11, 19) : '--:--:--';
+                        item.innerHTML = `
+                            <span class="audit-ts">[${time}]</span>
+                            <span class="audit-act">${ev.action}</span>
+                            <span><strong>${ev.username || 'User ' + ev.chat_id}:</strong> ${ev.details}</span>
+                        `;
+                        eventsBox.appendChild(item);
+                    });
+                }
+            }
+        } catch (e) {}
+    }
+
+    async function testTelegramBroadcast() {
+        showToast("Отправка тестового оповещения в Telegram...", "info");
+        const res = await fetch('/api/admin/telegram/broadcast', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: "Тестовое системное оповещение WebGate: Шлюз работает в штатном режиме." })
+        });
+        if (res.ok) {
+            showToast("Тестовое оповещение отправлено в Telegram", "success");
+            await fetchTelegramStatus();
+        } else {
+            showToast("Ошибка отправки оповещения", "danger");
+        }
+    }
+
+
+    /* --------------------------------------------------------------------------
+       AUDIT & HEALTH
+       -------------------------------------------------------------------------- */
+    async function fetchAudit() {
+        try {
+            const res = await fetch('/api/admin/audit');
+            if (res.ok) {
+                const logs = await res.json();
+                const container = document.getElementById('audit-logs');
+                container.innerHTML = '';
+
+                // Render in audit tab
+                logs.slice().reverse().forEach(log => {
+                    const item = document.createElement('div');
+                    item.className = 'audit-item';
+                    const time = log.timestamp ? log.timestamp.substring(11, 19) : '--:--:--';
+                    item.innerHTML = `
+                        <span class="audit-ts">[${time}]</span>
+                        <span class="audit-act">${log.action}</span>
+                        <span>${log.details} (${log.target_id || ''})</span>
+                    `;
+                    container.appendChild(item);
+                });
+
+                // Render top 5 in overview tab
+                const ovContainer = document.getElementById('ov-recent-audit');
+                ovContainer.innerHTML = '';
+                logs.slice().reverse().slice(0, 5).forEach(log => {
+                    const time = log.timestamp ? log.timestamp.substring(11, 19) : '--:--:--';
+                    const div = document.createElement('div');
+                    div.innerHTML = `<span style="color:var(--text-muted);">[${time}]</span> <strong style="color:var(--accent);">${log.action}</strong>: ${log.details}`;
+                    ovContainer.appendChild(div);
+                });
+            }
+        } catch (e) {}
+    }
+
+    async function fetchHealth() {
+        try {
+            const res = await fetch('/healthz');
+            if (res.ok) {
+                const data = await res.json();
+                document.getElementById('hz-status').innerText = data.status || 'HEALTHY';
+                document.getElementById('hz-timestamp').innerText = data.timestamp || '--';
+                document.getElementById('hz-services-ct').innerText = data.services_ct || '--';
+                document.getElementById('hz-devices-ct').innerText = data.devices_ct || '--';
+            }
+        } catch (e) {}
+    }
+
+    /* --------------------------------------------------------------------------
+       THEME & APPEARANCE ENGINE
+       -------------------------------------------------------------------------- */
+    const state = {
+        theme: localStorage.getItem('wg_theme') || 'system',
+        accent: localStorage.getItem('wg_accent') || 'ember',
+        motion: localStorage.getItem('wg_motion') || 'system',
+        density: localStorage.getItem('wg_density') || 'comfortable',
+    };
+
+    function initAppearanceUI() {
+        document.querySelectorAll('[id^="theme-btn-"]').forEach(btn => btn.classList.remove('btn-accent'));
+        const activeThemeBtn = document.getElementById(`theme-btn-${state.theme}`);
+        if (activeThemeBtn) activeThemeBtn.classList.add('btn-accent');
+
+        document.querySelectorAll('[id^="density-"]').forEach(btn => btn.classList.remove('btn-accent'));
+        const activeDensityBtn = document.getElementById(`density-${state.density}`);
+        if (activeDensityBtn) activeDensityBtn.classList.add('btn-accent');
+
+        document.querySelectorAll('[id^="motion-"]').forEach(btn => btn.classList.remove('btn-accent'));
+        const activeMotionBtn = document.getElementById(`motion-${state.motion}`);
+        if (activeMotionBtn) activeMotionBtn.classList.add('btn-accent');
+
+        updateStatusBarInfo();
+    }
+
+    function setTheme(theme) {
+        state.theme = theme;
+        localStorage.setItem('wg_theme', theme);
+        const root = document.documentElement;
+        root.setAttribute('data-theme-pref', theme);
+        
+        let effectiveTheme = theme;
+        if (theme === 'system') {
+            effectiveTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        root.setAttribute('data-theme', effectiveTheme);
+        initAppearanceUI();
+        showToast('Тема обновлена: ' + (theme === 'system' ? 'Системная' : theme === 'dark' ? 'Темная' : 'Светлая'), 'info');
+    }
+
+    function setAccent(accent) {
+        state.accent = accent;
+        localStorage.setItem('wg_accent', accent);
+        document.documentElement.setAttribute('data-accent', accent);
+        initAppearanceUI();
+        showToast(`Акцентный цвет: ${accent.toUpperCase()}`, 'info');
+    }
+
+    function setDensity(density) {
+        state.density = density;
+        localStorage.setItem('wg_density', density);
+        document.documentElement.setAttribute('data-density', density);
+        initAppearanceUI();
+    }
+
+    function setMotion(motion) {
+        state.motion = motion;
+        localStorage.setItem('wg_motion', motion);
+        document.documentElement.setAttribute('data-motion', motion);
+        initAppearanceUI();
+    }
+
+    function updateStatusBarInfo() {
+        const themeEl = document.getElementById('bar-theme-name');
+        if (themeEl) {
+            const effTheme = document.documentElement.getAttribute('data-theme');
+            themeEl.innerText = `${effTheme.toUpperCase()} / ${state.accent.toUpperCase()}`;
+        }
+    }
+
+    /* --------------------------------------------------------------------------
+       TOAST ENGINE
+       -------------------------------------------------------------------------- */
+    function showToast(message, type = 'info', duration = 3000) {
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = `toast-item toast-${type}`;
+        
+        let iconSvg = '';
+        if (type === 'success') {
+            iconSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--success)"><polyline points="20 6 9 17 4 12"/></svg>`;
+        } else if (type === 'danger') {
+            iconSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--danger)"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
+        } else {
+            iconSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--accent)"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
+        }
+
+        toast.innerHTML = `${iconSvg}<span>${message}</span>`;
+        container.appendChild(toast);
+
+        requestAnimationFrame(() => toast.classList.add('show'));
+
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 350);
+        }, duration);
+    }
+
+    // Config upload file input handler
+    document.getElementById('local-config-input').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async function(evt) {
+            const content = evt.target.result;
+            const res = await fetch('/api/admin/config/bind', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: content })
+            });
+            if (res.ok) {
+                showToast(`Манифест '${file.name}' загружен и применен`, "success");
+                await loadAllData();
+            }
+        };
+        reader.readAsText(file);
+    });
+
+    // Clock ticker
+    setInterval(() => {
+        const d = new Date();
+        document.getElementById("sys-clock").innerText = "UTC " + d.toISOString().substring(11, 19);
+    }, 1000);
+
+    // Initialization
+    const initialHash = window.location.hash.replace('#', '');
+    if (initialHash && tabs.includes(initialHash)) {
+        switchTab(initialHash);
+    } else {
+        switchTab('overview');
+    }
+    initAppearanceUI();
+    appendTgMessage("bot", "🏛️ WebGate Telegram Admin Bot активен.\nИспользуйте команду /services для управления процессами и портами.");
+    loadAllData();
+</script>
+</body>
+</html>

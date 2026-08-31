@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+pub mod android_lifecycle;
+pub mod keystore;
+
 use webgate_core::Platform;
 
 /// Platform hooks exposed to the application without leaking OS-native types.

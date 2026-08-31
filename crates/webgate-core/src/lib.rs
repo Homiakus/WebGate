@@ -1,5 +1,11 @@
 #![forbid(unsafe_code)]
 
+pub mod broker;
+pub mod config;
+pub mod device;
+pub mod policy;
+pub mod release;
+
 /// Operating-system families supported by WebGate's portable core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Platform {

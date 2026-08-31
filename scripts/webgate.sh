@@ -1,19 +1,25 @@
-#!/usr/bin/env sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-MANAGER="$SCRIPT_DIR/project_manager.py"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MANAGER="${SCRIPT_DIR}/project_manager.py"
 
-if command -v python3 >/dev/null 2>&1; then
-    exec python3 "$MANAGER" "$@"
+find_python() {
+    for cmd in python3 python py; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            if "$cmd" -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" 2>/dev/null; then
+                echo "$cmd"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+PYTHON_BIN="$(find_python || true)"
+if [ -z "$PYTHON_BIN" ]; then
+    echo "ОШИБКА: Для запуска менеджера проектов WebGate требуется Python 3.11+." >&2
+    exit 1
 fi
 
-if command -v python >/dev/null 2>&1; then
-    exec python "$MANAGER" "$@"
-fi
-
-cat >&2 <<'EOF'
-Python 3.11+ is required to launch the WebGate project manager.
-Install Python using your system package manager, then rerun scripts/webgate.sh.
-EOF
-exit 1
+exec "$PYTHON_BIN" "$MANAGER" "$@"

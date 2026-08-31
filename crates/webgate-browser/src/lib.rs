@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+pub mod adapter;
+pub mod capsule;
+pub mod qualification;
+
 use webgate_core::Platform;
 
 /// Browser engines recognized by the WebGate browser boundary.
@@ -15,6 +19,7 @@ pub enum BrowserState {
     Stopped,
     Starting,
     Ready,
+    Paused,
     Failed,
 }
 
@@ -34,6 +39,16 @@ impl BrowserConfig {
     pub const fn platform(self) -> Platform {
         self.platform
     }
+}
+
+/// Platform lifecycle events received by the browser capsule (e.g. Android pause/resume/recreate).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BrowserLifecycleEvent {
+    Pause,
+    Resume,
+    SaveState,
+    RestoreState(String),
+    LowMemory,
 }
 
 /// Minimal engine boundary. Concrete Servo types must not leak through it.

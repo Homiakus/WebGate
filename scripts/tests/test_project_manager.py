@@ -64,9 +64,43 @@ class ProjectManagerTests(unittest.TestCase):
     def test_repository_root_is_derived_from_script_location(self) -> None:
         self.assertTrue((manager.ROOT / "Cargo.toml").is_file())
         self.assertTrue((manager.ROOT / "MASTER_PLAN.md").is_file())
+        self.assertTrue((manager.ROOT / "server" / "go.mod").is_file())
 
     def test_dry_run_verify_does_not_require_tools_to_execute(self) -> None:
         self.assertEqual(manager.verify(dry_run=True), 0)
+
+    def test_dry_run_compile_targets(self) -> None:
+        self.assertEqual(manager.compile_target("all", release=False, dry_run=True), 0)
+        self.assertEqual(manager.compile_target("client", release=True, dry_run=True), 0)
+        self.assertEqual(manager.compile_target("server", release=True, dry_run=True), 0)
+        self.assertEqual(manager.compile_target("android", release=False, dry_run=True), 0)
+        self.assertEqual(manager.compile_target("workspace", release=False, dry_run=True), 0)
+
+    def test_unknown_target_raises_error(self) -> None:
+        with self.assertRaises(ValueError):
+            manager.compile_target("non_existent_target", dry_run=True)
+
+    def test_dry_run_test_suites(self) -> None:
+        self.assertEqual(manager.test(dry_run=True), 0)
+
+    def test_dry_run_package_distribution(self) -> None:
+        self.assertEqual(
+            manager.package_distribution(
+                version="1.0.0",
+                channel="stable",
+                signing_secret="test-secret",
+                dry_run=True,
+            ),
+            0,
+        )
+
+    def test_doctor_collects_go_and_server_status(self) -> None:
+        statuses = manager.collect_doctor_status()
+        names = {s.name for s in statuses}
+        self.assertIn("go", names)
+        self.assertIn("server/go.mod", names)
+        self.assertIn("Cargo.lock", names)
+        self.assertIn("repository-root", names)
 
 
 if __name__ == "__main__":

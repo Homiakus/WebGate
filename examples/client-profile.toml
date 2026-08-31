@@ -1,0 +1,24 @@
+# WebGate Client Profile Configuration
+# Neo-Swiss / Editorial Fleet Profile
+
+profile_id = "editorial-fleet-alpha"
+profile_name = "Primary Editorial Operations Fleet"
+version = "1.2.0"
+device_label = "editorial-workstation-node"
+
+# Transport Failover Relays
+primary_relay_addr = "127.0.0.1"
+primary_relay_port = 43111
+
+fallback_relay_addr = "127.0.0.1"
+fallback_relay_port = 43112
+
+# Default initial navigation target
+default_destination = "webgate://service/docs/overview"
+
+# Selectable Destination Catalog
+# Format: id|name|url|category|description
+destination = "docs|Corporate Knowledge Base|webgate://service/docs/overview|Documentation|Encrypted architecture guides and security manuals"
+destination = "factory|FactoryOS Production Terminal|webgate://service/factory/terminal|Operations|Real-time line controller and telemetry stream"
+destination = "monitoring|Infrastructure Telemetry|webgate://service/monitoring/telemetry|Telemetry|Relay latency and device health metrics"
+destination = "vault|Secure Key Vault|webgate://service/vault/secrets|Security|Cryptographic materials and policy management"

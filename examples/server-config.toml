@@ -1,0 +1,13 @@
+# WebGate Server & Control Plane Manifest
+# Neo-Swiss / Editorial Gateway Configuration
+
+server_name = "WebGate Production Control Plane (Node Alpha)"
+listen_addr = ":8787"
+admin_addr = "127.0.0.1:8787"
+
+# Protected Upstream Destination Routes & Executable Bindings
+# Format: id|name|slug|upstream_url|port|executable_path|status
+service = "svc_docs|Corporate Knowledge Base|docs|http://127.0.0.1:8081|8081|./bin/docs-server.exe|active"
+service = "svc_factory|FactoryOS Production Terminal|factory|http://127.0.0.1:8082|8082|./bin/factoryos.exe|active"
+service = "svc_monitoring|Infrastructure Telemetry & Metrics|monitoring|http://127.0.0.1:8083|8083|./bin/telemetry-agent.exe|active"
+service = "svc_vault|Cryptographic Secret Vault|vault|http://127.0.0.1:8084|8084|./bin/vault-daemon.exe|active"

@@ -4,5 +4,9 @@
 .idea/
 .vscode/
 .webgate/
+/bin/
+/dist/
 __pycache__/
 *.pyc
+*.exe
+*.dll
