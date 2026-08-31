@@ -48,6 +48,9 @@ func NewServerGateway(
 		authorizer: authorizer,
 		httpClient: &http.Client{
 			Timeout: config.ProxyTimeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		config: config,
 	}
@@ -163,13 +166,14 @@ func mapMethodToPermission(method string) domain.PermissionBits {
 }
 
 func buildSafeUpstreamURL(baseUpstream, subpath, query string) (string, error) {
-	u, err := url.Parse(baseUpstream)
+	canonicalUpstream, err := domain.CanonicalizeUpstreamURL(baseUpstream)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", ErrSSRFAttemptBlocked, err)
 	}
 
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", ErrSSRFAttemptBlocked
+	u, err := url.Parse(canonicalUpstream)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrSSRFAttemptBlocked, err)
 	}
 
 	u.Path = strings.TrimSuffix(u.Path, "/") + subpath

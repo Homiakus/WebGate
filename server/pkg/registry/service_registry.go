@@ -10,16 +10,16 @@ import (
 )
 
 var (
-	ErrServiceNotFound      = errors.New("service not found")
-	ErrServiceAlreadyExists  = errors.New("service with this ID already exists")
-	ErrSlugCollision        = errors.New("service with this slug already exists")
-	ErrServiceInactive      = errors.New("service is inactive or disabled")
+	ErrServiceNotFound     = errors.New("service not found")
+	ErrServiceAlreadyExists = errors.New("service with this ID already exists")
+	ErrSlugCollision       = errors.New("service with this slug already exists")
+	ErrServiceInactive     = errors.New("service is inactive or disabled")
 )
 
 type ServiceRegistry struct {
-	mu         sync.RWMutex
-	byID       map[string]*domain.ProtectedService
-	bySlug     map[string]*domain.ProtectedService
+	mu     sync.RWMutex
+	byID   map[string]*domain.ProtectedService
+	bySlug map[string]*domain.ProtectedService
 }
 
 func NewServiceRegistry() *ServiceRegistry {
@@ -109,6 +109,11 @@ func (r *ServiceRegistry) UpdateStatus(id string, status domain.ServiceStatus) e
 
 // UpdateRoute changes the upstream URL of an existing service.
 func (r *ServiceRegistry) UpdateRoute(id string, upstreamURL string) error {
+	canonicalUpstream, err := domain.CanonicalizeUpstreamURL(upstreamURL)
+	if err != nil {
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -117,7 +122,7 @@ func (r *ServiceRegistry) UpdateRoute(id string, upstreamURL string) error {
 		return ErrServiceNotFound
 	}
 
-	svc.UpstreamURL = upstreamURL
+	svc.UpstreamURL = canonicalUpstream
 	svc.Version++
 	svc.UpdatedAt = time.Now().UTC()
 	return nil

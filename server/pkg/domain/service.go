@@ -3,6 +3,9 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -69,8 +72,69 @@ var (
 	ErrInvalidServiceID   = errors.New("service ID cannot be empty")
 	ErrInvalidWorkspaceID = errors.New("workspace ID cannot be empty")
 	ErrInvalidSlug        = errors.New("slug must be alphanumeric or hyphenated")
-	ErrInvalidUpstreamURL = errors.New("upstream URL must be valid HTTP/HTTPS loopback or private destination")
+	ErrInvalidUpstreamURL = errors.New("upstream URL must be an explicit HTTP/HTTPS loopback or private IP destination")
 )
+
+// CanonicalizeUpstreamURL validates the server-owned upstream routing boundary.
+// Arbitrary DNS names are deliberately rejected until an explicit policy-owned
+// resolver/CIDR contract exists; this prevents DNS-rebinding from widening egress.
+func CanonicalizeUpstreamURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", ErrInvalidUpstreamURL
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil || u.Opaque != "" || u.Host == "" {
+		return "", ErrInvalidUpstreamURL
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", ErrInvalidUpstreamURL
+	}
+	if u.User != nil || u.Fragment != "" || u.RawQuery != "" {
+		return "", ErrInvalidUpstreamURL
+	}
+
+	port := u.Port()
+	if port != "" {
+		parsedPort, err := strconv.Atoi(port)
+		if err != nil || parsedPort < 1 || parsedPort > 65535 {
+			return "", ErrInvalidUpstreamURL
+		}
+	}
+
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if host == "localhost" {
+		host = "127.0.0.1"
+	} else {
+		ip := net.ParseIP(host)
+		if ip == nil || !allowedPrivateUpstreamIP(ip) {
+			return "", ErrInvalidUpstreamURL
+		}
+		host = ip.String()
+	}
+
+	if strings.Contains(host, ":") {
+		if port == "" {
+			u.Host = "[" + host + "]"
+		} else {
+			u.Host = net.JoinHostPort(host, port)
+		}
+	} else if port == "" {
+		u.Host = host
+	} else {
+		u.Host = net.JoinHostPort(host, port)
+	}
+	u.RawPath = ""
+	return u.String(), nil
+}
+
+func allowedPrivateUpstreamIP(ip net.IP) bool {
+	if ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
+}
 
 // Validate validates server-owned fields of ProtectedService.
 func (s *ProtectedService) Validate() error {
@@ -87,9 +151,11 @@ func (s *ProtectedService) Validate() error {
 	if s.Port > 0 && strings.TrimSpace(s.UpstreamURL) == "" {
 		s.UpstreamURL = fmt.Sprintf("http://127.0.0.1:%d", s.Port)
 	}
-	if strings.TrimSpace(s.UpstreamURL) == "" {
-		return ErrInvalidUpstreamURL
+	canonicalUpstream, err := CanonicalizeUpstreamURL(s.UpstreamURL)
+	if err != nil {
+		return err
 	}
+	s.UpstreamURL = canonicalUpstream
 	if s.ProcessState == "" {
 		s.ProcessState = ProcessStateStopped
 	}
