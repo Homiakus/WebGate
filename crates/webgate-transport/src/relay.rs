@@ -2,7 +2,6 @@
 
 use crate::{LocalProxyEndpoint, TransportProvider, TransportState};
 use std::net::{IpAddr, Ipv4Addr};
-use std::time::Instant;
 
 /// Protocol kind for secure relay transport channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +21,10 @@ pub struct RelayConfig {
     pub local_listen_port: u16,
 }
 
-/// Concrete transport provider managing a local proxy tunnel to a remote secure relay.
+/// Concrete transport provider configuration for a secure relay.
+///
+/// The protocol backend is intentionally not implemented yet. This type therefore
+/// stays fail-closed instead of advertising a configured endpoint as a live tunnel.
 #[derive(Debug)]
 pub struct SecureRelayTransport {
     config: RelayConfig,
@@ -44,24 +46,21 @@ impl SecureRelayTransport {
         }
     }
 
-    /// Starts the transport tunnel and enters Ready state.
+    /// Attempts to start the transport tunnel.
+    ///
+    /// Until a real relay backend owns and verifies the configured listener/tunnel,
+    /// configuration must not be promoted to `Ready`.
     pub fn start_tunnel(&mut self) -> Result<LocalProxyEndpoint, &'static str> {
-        let Some(ep) = self.local_endpoint else {
-            self.state = TransportState::Offline;
-            return Err("invalid local loopback endpoint");
-        };
-
-        self.state = TransportState::Ready;
-        Ok(ep)
+        self.state = TransportState::Offline;
+        self.last_ping_latency_ms = None;
+        Err("secure relay transport backend is not implemented")
     }
 
-    /// Performs an active probe measuring roundtrip latency.
-    pub fn probe_latency(&mut self) -> u64 {
-        let start = Instant::now();
-        // In real network path, sends encrypted keepalive ping frame to relay
-        let duration_ms = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
-        self.last_ping_latency_ms = Some(duration_ms);
-        duration_ms
+    /// Returns the last real probe latency when a backend has supplied one.
+    /// No synthetic zero-latency success is generated.
+    #[must_use]
+    pub fn last_probe_latency_ms(&self) -> Option<u64> {
+        self.last_ping_latency_ms
     }
 
     #[must_use]
@@ -94,6 +93,7 @@ impl TransportProvider for SecureRelayTransport {
 
     fn stop(&mut self) {
         self.state = TransportState::Stopped;
+        self.last_ping_latency_ms = None;
     }
 }
 
@@ -102,25 +102,34 @@ impl TransportProvider for SecureRelayTransport {
 mod tests {
     use super::*;
 
-    #[test]
-    fn starts_and_exposes_local_proxy_endpoint() {
-        let config = RelayConfig {
+    fn relay_config() -> RelayConfig {
+        RelayConfig {
             name: "Primary-Relay-A".to_string(),
             remote_host: "relay-a.webgate.corp".to_string(),
             remote_port: 8443,
             protocol: RelayProtocol::Socks5OverTls,
             local_listen_port: 43120,
-        };
+        }
+    }
 
-        let mut transport = SecureRelayTransport::new(config);
+    #[test]
+    fn configured_relay_does_not_claim_ready_without_backend() {
+        let mut transport = SecureRelayTransport::new(relay_config());
         assert_eq!(transport.state(), TransportState::Stopped);
         assert_eq!(transport.local_proxy(), None);
 
-        let endpoint = transport.start_tunnel().unwrap();
-        assert_eq!(endpoint.socket_addr().port(), 43120);
-        assert_eq!(transport.state(), TransportState::Ready);
-        assert_eq!(transport.local_proxy(), Some(endpoint));
+        assert_eq!(
+            transport.start_tunnel(),
+            Err("secure relay transport backend is not implemented")
+        );
+        assert_eq!(transport.state(), TransportState::Offline);
+        assert_eq!(transport.local_proxy(), None);
+        assert_eq!(transport.last_probe_latency_ms(), None);
         assert_eq!(transport.protocol(), RelayProtocol::Socks5OverTls);
+        assert_eq!(
+            transport.remote_destination(),
+            ("relay-a.webgate.corp", 8443)
+        );
 
         transport.stop();
         assert_eq!(transport.state(), TransportState::Stopped);
