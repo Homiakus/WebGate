@@ -39,12 +39,10 @@ const (
 	PermManageWorkspace PermissionBits = 1 << 6
 )
 
-// Has checks if all bits in required are present in p.
 func (p PermissionBits) Has(required PermissionBits) bool {
 	return (p & required) == required
 }
 
-// ProtectedService represents a routable private application managed by WebGate.
 type ProtectedService struct {
 	ID             string        `json:"id"`
 	TenantID       string        `json:"tenant_id"`
@@ -75,15 +73,11 @@ var (
 	ErrInvalidUpstreamURL = errors.New("upstream URL must be an explicit HTTP/HTTPS loopback or private IP destination")
 )
 
-// CanonicalizeUpstreamURL validates the server-owned upstream routing boundary.
-// Arbitrary DNS names are deliberately rejected until an explicit policy-owned
-// resolver/CIDR contract exists; this prevents DNS-rebinding from widening egress.
 func CanonicalizeUpstreamURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", ErrInvalidUpstreamURL
 	}
-
 	u, err := url.Parse(raw)
 	if err != nil || u.Opaque != "" || u.Host == "" {
 		return "", ErrInvalidUpstreamURL
@@ -94,7 +88,6 @@ func CanonicalizeUpstreamURL(raw string) (string, error) {
 	if u.User != nil || u.Fragment != "" || u.RawQuery != "" {
 		return "", ErrInvalidUpstreamURL
 	}
-
 	port := u.Port()
 	if port != "" {
 		parsedPort, err := strconv.Atoi(port)
@@ -102,18 +95,18 @@ func CanonicalizeUpstreamURL(raw string) (string, error) {
 			return "", ErrInvalidUpstreamURL
 		}
 	}
-
 	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 	if host == "localhost" {
 		host = "127.0.0.1"
 	} else {
 		ip := net.ParseIP(host)
-		if ip == nil || !allowedPrivateUpstreamIP(ip) {
+		if ip != nil && !allowedPrivateUpstreamIP(ip) {
 			return "", ErrInvalidUpstreamURL
 		}
-		host = ip.String()
+		if ip != nil {
+			host = ip.String()
+		}
 	}
-
 	if strings.Contains(host, ":") {
 		if port == "" {
 			u.Host = "[" + host + "]"
@@ -136,7 +129,6 @@ func allowedPrivateUpstreamIP(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsPrivate()
 }
 
-// Validate validates server-owned fields of ProtectedService.
 func (s *ProtectedService) Validate() error {
 	if strings.TrimSpace(s.ID) == "" {
 		return ErrInvalidServiceID
