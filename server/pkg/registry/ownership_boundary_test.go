@@ -1,6 +1,9 @@
 package registry_test
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/hex"
 	"testing"
 
 	"github.com/Homiakus/WebGate/server/pkg/domain"
@@ -64,8 +67,18 @@ func TestServiceRegistryOwnsStoredState(t *testing.T) {
 }
 
 func TestDeviceRegistryOwnsStoredState(t *testing.T) {
-	dev, privateKey := newTestDevice(t, "device-owned", "user-owned")
-	_ = privateKey
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := &domain.Device{
+		ID:           "device-owned",
+		AccountID:    "account-owned",
+		UserID:       "user-owned",
+		PublicKeyHex: hex.EncodeToString(publicKey),
+		Algorithm:    "Ed25519",
+		Label:        "Owned device",
+	}
 	reg := registry.NewDeviceRegistry()
 	if err := reg.Enroll(dev); err != nil {
 		t.Fatal(err)
