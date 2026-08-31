@@ -4,7 +4,7 @@
 **Primary branch:** `main`  
 **Plan status:** ACTIVE  
 **Reconciled:** 2026-08-31  
-**Last qualified main before Iteration 12:** `a4780a370f0720512552a16b45241e84c4252f73`
+**Last qualified main before Iteration 13:** `82635a87693c5c34921e5d2be48b92fc7e15ec29`
 
 This file is the **only execution source of truth**. Supporting documents under `docs/` are evidence/design references; they do not own task state, priority, acceptance, or release readiness.
 
@@ -72,6 +72,7 @@ Material unexpected evidence becomes `F-XXX` before task scope/order changes.
 - Split loopback Data/Admin listeners and interim strong Admin bearer token.
 - Process spawn failure is not reported as `RUNNING`.
 - T-043: server upstream routing is loopback-only by default, validated at construction/mutation/use, DNS/public/private-LAN/link-local/metadata pivots are denied, gateway does not use an environment HTTP proxy, server-side redirects are not followed, same-origin redirects are rewritten through `/svc/{slug}`, and cross-origin redirect escapes fail closed.
+- T-049: Go security build line is pinned to 1.26.6 and the private SecureAcces v0.4.0 dependency has a local provenance/integrity anchor whose vendored bytes are checked against upstream Git blob identities.
 
 ## Not production-qualified
 
@@ -81,7 +82,8 @@ Material unexpected evidence becomes `F-XXX` before task scope/order changes.
 - Real Relay A/B connectivity and Origin reverse-connectivity agent.
 - No-public-IP/CGNAT end-to-end path.
 - Platform-backed production device key storage.
-- Authoritative SecureAcces runtime/admin adapter.
+- Authoritative SecureAcces runtime/data-plane adapter; T-049 is dependency foundation only.
+- SecureAcces-backed administrator management authorization; interim shared token remains containment only.
 - Durable WebGate-owned server state.
 - End-to-end production qualification and release requalification.
 
@@ -122,15 +124,18 @@ Historical F-001..F-028 remain preserved in Git history.
 - **F-030 — Synthetic client transport readiness:** PARTIALLY RESOLVED/CONTAINED by T-035; real provider remains T-036.
 - **F-031 — No real Servo/proxied protected browser runtime:** OPEN / Critical → T-041.
 - **F-032 — Production entrypoint uses synthetic device keys:** OPEN / Critical → T-040.
-- **F-033 — SecureAcces integration is an in-memory surrogate:** OPEN / Critical → T-038.
+- **F-033 — SecureAcces integration is an in-memory surrogate:** OPEN / Critical → T-050 under T-038.
 - **F-034 — Origin reverse connectivity absent:** OPEN / Critical → T-037.
 - **F-035 — Security/operations state largely ephemeral:** OPEN / High → T-039.
-- **F-036 — Admin authentication is interim shared token:** OPEN/CONTAINED / High → T-038.
+- **F-036 — Admin authentication is interim shared token:** OPEN/CONTAINED / High → T-051 under T-038.
 - **F-037 — Explicit client config failed open to defaults:** RESOLVED by T-035.
 - **F-038 — CI lacks promised race/mutation/fuzz depth:** OPEN / High → T-044.
 - **F-039 — Runtime client config bind can report false success:** OPEN / High → T-048.
+- **F-040 — SecureAcces dependency/toolchain/authentication boundaries were under-modeled:** PARTIALLY RESOLVED by T-049; runtime/data authority remains T-050 and administrator authority remains T-051.
 
 T-043 did not create a new finding ID: metadata/public/LAN/DNS/redirect pivots were already inside the task's declared SSRF attack surface. Adversarial review did reject an intermediate solution that still allowed arbitrary RFC1918 destinations.
+
+T-038 was decomposed after inspection of the real private `Homiakus/SecureAcces` v0.4.0 contract. The upstream security-supported production builds are Go 1.26.x/1.27.x while WebGate was on Go 1.23, and a direct private sibling-module fetch would make clean CI dependent on an undeclared cross-repository credential. Mixing dependency reproducibility, data-plane authority and administrator authority in one commit would violate the atomic-task rule. T-049/T-050/T-051 therefore remain the only implementation path for T-038; no parallel roadmap was created.
 
 ---
 
@@ -155,6 +160,7 @@ Status vocabulary: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS
 - T-034 Restore execution truth and qualification semantics — DONE.
 - T-035 Eliminate false readiness and fail-open client bootstrap — DONE.
 - **T-043 Harden upstream routing and SSRF containment — DONE.**
+- **T-049 Pin reproducible SecureAcces dependency foundation — DONE.**
 
 ### T-043 acceptance evidence
 
@@ -171,13 +177,25 @@ Status vocabulary: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS
 - First green candidate `ce4f2031a6034a81144ee9b9b322037a99a859d4` was **rejected before main** by adversarial review because it still allowed arbitrary RFC1918; green CI is not sufficient when the invariant is wrong.
 - Semantic DNS-allow mutant `79e93555d40868713501a87a31e204fe418f086c` was killed by the `example.com` negative test after gofmt/vet passed.
 
+### T-049 acceptance evidence
+
+- RED characterization commit `95be5b0e0721529bff215f1ebf15003d26173aa7` failed exactly because WebGate still used Go 1.23 and had no pinned local SecureAcces dependency anchor; existing Go gates remained green.
+- WebGate server build line is `go 1.26` with `toolchain go1.26.6`, matching the upstream v0.4.0 supported production line.
+- `server/go.mod` requires `github.com/Homiakus/secureaccess v0.4.0` and replaces it with a repository-local path, so clean WebGate CI does not require a private cross-repository credential.
+- `server/third_party/secureaccess/UPSTREAM.md` pins upstream commit `827abb1add11a9fcbd0a9944e65efbd20c675739`, version `v0.4.0`, scope and update rules.
+- Vendored anchor files (`go.mod`, LICENSE, package docs, version) are byte-identical to upstream; the Python contract test recomputes Git blob object IDs and rejects drift.
+- A Go package test imports the local SecureAcces module and verifies `Version == 0.4.0`; a textual `replace` alone is not treated as qualification.
+- Full authorization source/Store/runtime wiring is intentionally **not** claimed by T-049; that behavior belongs to T-050. Admin management authority belongs to T-051.
+- Work-branch qualification candidate `6a299ed7d62e024d830d36e74e37997f403c4495` passed project-manager/architecture/Rust/clippy, `cargo-deny`, Go 1.26.6 format/vet/test before plan reconciliation.
+- Mutation is not semantically applicable to this metadata/provenance anchor; integrity is tested by byte identity. Security allow/deny mutation resumes in T-050/T-051 and the pinned mutation framework remains T-044.
+
 ## Reopened / requalification-required historical tasks
 
 - T-004 Real Servo embedding adapter — REOPENED.
 - T-005 Real fail-closed browser networking — REOPENED.
 - T-008 Failover controller — state semantics repaired; real-provider qualification remains T-036/T-042.
 - T-010 Platform device-key adapters — REOPENED.
-- T-011 SecureAcces integration — REOPENED.
+- T-011 SecureAcces integration — REOPENED; execution is T-049/T-050/T-051 under T-038.
 - T-012 Primary production transport — REOPENED.
 - T-013 Independent fallback/dual-relay — REOPENED.
 - T-014 Servo/site/security/performance qualification — REOPENED.
@@ -203,12 +221,20 @@ Real listener, destination allowlist, bounded proxy semantics, provider lifecycl
 Persistent outbound Origin connections, authentication, multiplexing, reconnect/backoff, relay registration/rotation, local gateway forwarding; prove no inbound port forwarding.
 
 ### T-038 — Authoritative SecureAcces + administrator authorization
-**Status:** READY · **Priority:** P0 · **Type:** AUTHORIZATION / ADMIN SECURITY  
-Replace production in-memory session/membership authority with a narrow SecureAcces adapter; bind admin identity/session/device/management permission. Unknown/unavailable authorization fails closed.
+**Status:** IN_PROGRESS · **Priority:** P0 · **Type:** AUTHORIZATION / ADMIN SECURITY  
+Umbrella convergence task only. It is complete only when T-049 + T-050 + T-051 are complete. Do not implement T-038 as a giant combined change.
+
+### T-050 — SecureAcces authoritative data-plane session/resource authorization
+**Status:** READY · **Priority:** P0 · **Type:** AUTHORIZATION / DATA PLANE  
+Introduce the exact qualified SecureAcces implementation required by WebGate behind a narrow adapter. Every protected request must authenticate the authoritative session, bind its SecureAcces `SessionView.DeviceID` to the presented active WebGate device, resolve tenant/workspace from the server-owned service registry, and call SecureAcces `Authorize`. Unknown/unavailable/revoked/expired/mismatched state fails closed. Remove the production path through WebGate-owned session/membership maps without weakening testability.
+
+### T-051 — SecureAcces administrator management authorization
+**Status:** TODO · **Priority:** P0 · **Type:** ADMIN SECURITY  
+Replace shared-token-only administrator authority with request-scoped SecureAcces principal/actor management authorization. `WEBGATE_ADMIN_TOKEN` may remain only as an explicitly scoped bootstrap/recovery factor if justified; it cannot by itself authorize process/config/device/release mutations. Preserve isolated Admin listener and audit every privileged decision.
 
 ### T-039 — Durable transactional server state
 **Status:** TODO · **Priority:** P0/P1 · **Type:** PERSISTENCE / RELIABILITY  
-Persist WebGate-owned service/device/release/audit/config metadata transactionally; SQLite preferred unless measurements disagree. SecureAcces-owned identity remains external authority.
+Persist WebGate-owned service/device/release/audit/config metadata transactionally; SQLite preferred unless measurements disagree. SecureAcces-owned identity remains its own authority boundary.
 
 ### T-040 — Production platform key stores
 **Status:** TODO · **Priority:** P0 · **Type:** IDENTITY / PLATFORM SECURITY  
@@ -250,13 +276,13 @@ Repository-setting write capability unavailable. Never force push; continue inde
 
 ```text
 T-034 DONE → T-035 DONE
-T-043 DONE ───────────────────────────┐
-T-038 SecureAcces authority ──────────┤
-T-039 durable state ──────────────────┼→ T-045 real system qualification
-T-035 → T-036 → T-037 ────────────────┤
-      ├→ T-040 platform keystore ─────┤
-      ├→ T-041 real Servo ────────────┤
-      └→ T-042 diverse failover ──────┘
+T-043 DONE
+T-049 DONE → T-050 → T-051 → T-038 convergence ─┐
+T-039 durable state ──────────────────────────────┼→ T-045 real system qualification
+T-035 → T-036 → T-037 ───────────────────────────┤
+      ├→ T-040 platform keystore ────────────────┤
+      ├→ T-041 real Servo ───────────────────────┤
+      └→ T-042 diverse failover ─────────────────┘
 T-044 trustworthy CI must land before T-045 final qualification.
 T-048 runtime config correctness is independent High/P1 work.
 T-045 → T-046 → T-047 convergence.
@@ -264,12 +290,13 @@ T-045 → T-046 → T-047 convergence.
 
 Current ordering by risk/dependency leverage:
 
-1. **T-038** — closes open Critical F-033 and High F-036 at the authorization/admin trust boundary.
-2. **T-039** — durable security state before restart/revocation qualification.
-3. **T-036 / T-037** — real protected transport and no-public-IP product core.
-4. **T-040 / T-041** — real key/browser boundaries.
-5. **T-044 / T-042 / T-048** — stronger feedback, resilience, runtime config correctness.
-6. **T-045 / T-046 / T-047** — real qualification, release requalification, convergence.
+1. **T-050** — replaces the Critical F-033 production authorization surrogate with real SecureAcces data-plane authority.
+2. **T-051** — closes High F-036 by moving privileged Admin decisions to SecureAcces management authorization.
+3. **T-039** — durable security/operations state before restart/revocation qualification.
+4. **T-036 / T-037** — real protected transport and no-public-IP product core.
+5. **T-040 / T-041** — real key/browser boundaries.
+6. **T-044 / T-042 / T-048** — stronger feedback, resilience, runtime config correctness.
+7. **T-045 / T-046 / T-047** — real qualification, release requalification, convergence.
 
 Priority is recalculated after every successful push/material finding.
 
@@ -311,6 +338,14 @@ scheme × host-kind × IP-class × port × userinfo × redirect-kind × registry
 ```
 
 T-043 representative classes: loopback v4/v6/localhost; metadata/link-local; public; unspecified; multicast; RFC1918 LAN; arbitrary DNS; userinfo; unsafe route mutation; same-origin redirect; cross-origin redirect; environment proxy bypass.
+
+For SecureAcces integration, T-050/T-051 must model at least:
+
+```text
+session state × account state × tenant-user state × membership state × permission bits
+× service tenant/workspace × SecureAcces DeviceID × presented WebGate device
+× WebGate device state/owner × authority availability × admin action
+```
 
 ---
 
@@ -358,9 +393,27 @@ False transport readiness and explicit-config fail-open removed. RED characteriz
 **Compatibility:** arbitrary DNS/private-LAN/public upstreams now intentionally fail closed. Existing repository production example routes are loopback and remain valid. A future LAN route requires an explicit policy-owned allowlist rather than generic RFC1918 trust.  
 **Plan reconciliation:** T-043 DONE; next task T-038.  
 **Process learning:** enforce a security invariant at construction + mutation + use; green CI is necessary but cannot justify an over-broad trust policy.  
-**Commit:** SELF — the final atomic commit containing implementation/tests/plan.  
+**Commit:** `82635a87693c5c34921e5d2be48b92fc7e15ec29`.  
 **Push:** `main`, normal fast-forward only.  
-**Result:** PASS only when final work-branch CI and remote-main verification succeed.
+**Result:** PASS; work-branch and repeated main CI succeeded.
+
+## Iteration 13A — T-049
+
+**Task:** Pin reproducible SecureAcces dependency foundation after decomposing T-038.  
+**Root cause:** WebGate production Go was 1.23 although SecureAcces v0.4.0 supports production builds on Go 1.26.x/1.27.x, and the private sibling repository could not be fetched reproducibly by clean WebGate CI without undeclared cross-repository credentials.  
+**Characterization:** RED commit `95be5b0e0721529bff215f1ebf15003d26173aa7` added only dependency contracts; exactly the Go-line and pinned-local-dependency assertions failed while existing Go gates remained green.  
+**Implementation:** server `go 1.26`, `toolchain go1.26.6`, require SecureAcces v0.4.0 with local replacement; immutable upstream dependency anchor with source/version/license provenance; Git blob identity verification; Go import/version smoke test.  
+**Adversarial review:** an attempted broader manual core vendoring step produced an `admin.go` blob whose Git SHA did not equal upstream and was rejected before entering any candidate tree. T-049 was narrowed back to dependency foundation; full authorization implementation remains T-050.  
+**Mutation:** not applicable to immutable dependency metadata; byte drift is covered by object-identity tests. Allow/deny mutation belongs to T-050/T-051; automated tooling remains T-044.  
+**Race:** no runtime shared state introduced.  
+**Security:** clean CI no longer needs a private sibling credential merely to resolve the pinned dependency anchor; vendored anchor bytes are tamper-evident against recorded upstream Git blob IDs.  
+**Performance:** no runtime hot-path behavior changed.  
+**Compatibility:** Go build hosts must support Go 1.26.6; this is intentional because the selected security dependency does not support WebGate's old production runtime line.  
+**Plan reconciliation:** F-040 recorded/partially resolved; T-038 decomposed into T-049 DONE → T-050 READY → T-051 TODO.  
+**Process learning:** dependency/toolchain qualification is a separate trust boundary from behavioral authorization; do not hide both inside one giant security commit.  
+**Commit:** SELF — final atomic commit containing dependency foundation/tests/plan.  
+**Push:** `main`, normal fast-forward only.  
+**Result:** PASS only when reconciled work-branch CI and repeated remote-main verification succeed.
 
 ---
 
@@ -368,7 +421,7 @@ False transport readiness and explicit-config fail-open removed. RED characteriz
 
 ```text
 CURRENT HEAD: resolve from remote main before next iteration
-CURRENT QUALIFIED MILESTONE: T-043 SSRF/upstream containment complete; real protected network path still NOT qualified
+CURRENT QUALIFIED MILESTONE: T-049 SecureAcces dependency/toolchain foundation complete; SecureAcces runtime authority still NOT qualified
 
 ARCHITECTURE:
 - Rust client contracts + Go server gateway
@@ -376,6 +429,7 @@ ARCHITECTURE:
 - target network = restricted client proxy → diverse transports/relays → outbound Origin reverse links
 - target auth = SecureAcces authoritative
 - server protected-service upstream = loopback-only until an explicit policy-owned non-loopback route model exists
+- SecureAcces dependency anchor = v0.4.0 / upstream commit 827abb1..., local replace, Go 1.26.6
 
 CRITICAL INVARIANTS:
 - no false Ready/Running
@@ -385,34 +439,38 @@ CRITICAL INVARIANTS:
 - Origin behind CGNAT without inbound ports
 - admin/data planes isolated and authorized
 - routing/upstreams server-owned, loopback-only by default, non-generic
+- production session/workspace/permission authority must be SecureAcces, not WebGate surrogate maps
 
 COMPLETED RECENTLY:
 - T-034 execution truth reconciliation
 - T-035 fail-closed readiness/bootstrap
 - T-043 SSRF/upstream containment
+- T-049 reproducible SecureAcces dependency/toolchain foundation
 
 OPEN CRITICAL/HIGH FINDINGS:
 - F-030 real provider absent
 - F-031 no real Servo/proxied runtime
 - F-032 synthetic production keystore
-- F-033 SecureAcces surrogate
+- F-033 SecureAcces surrogate → T-050
 - F-034 no Origin reverse connectivity
 - F-035 ephemeral state
-- F-036 interim admin token
+- F-036 interim admin token → T-051
 - F-038 race/mutation CI gap
 - F-039 runtime config bind false-success
+- F-040 dependency boundary partially resolved; behavior remains T-050/T-051
 
 BLOCKERS:
 - T-017 repository-setting write capability unavailable
 - external relay/VPS/hardware qualification may require environment later
 
-NEXT TASK: T-038 — authoritative SecureAcces + administrator authorization
-WHY NEXT: closes Critical authorization authority gap and High interim-admin-auth gap; gates real system qualification
+NEXT TASK: T-050 — SecureAcces authoritative data-plane session/resource authorization
+WHY NEXT: closes Critical F-033 before adding more network reachability; prevents real transport from exposing a surrogate authorization boundary
 
 CRITICAL FILES:
 - MASTER_PLAN.md
+- server/go.mod
+- server/third_party/secureaccess/*
 - server/pkg/auth/*
-- server/pkg/admin/*
 - server/pkg/gateway/*
 - server/pkg/domain/service.go
 - server/pkg/registry/service_registry.go
@@ -423,6 +481,8 @@ IMPORTANT DECISIONS:
 - protected upstream = loopback-only unless a typed policy explicitly owns another route
 - arbitrary DNS/RFC1918/public destinations are not implicitly trusted
 - redirects cannot expose direct upstream/cross-origin navigation
+- SecureAcces private dependency is resolved reproducibly without CI PAT dependence
+- dependency anchor is not authorization qualification
 - no force push
 
 REJECTED OPTIONS:
@@ -431,6 +491,8 @@ REJECTED OPTIONS:
 - merging red characterization commits
 - generic RFC1918 trust merely because an address is private
 - treating a green candidate as sufficient when adversarial review shows invariant mismatch
+- claiming SecureAcces integration merely because module metadata/version compiles
+- accepting manually reconstructed security source when its Git blob SHA differs from upstream
 ```
 
 ---
