@@ -3,7 +3,7 @@
 **Repository:** `Homiakus/WebGate`  
 **Primary branch:** `main`  
 **Plan status:** ACTIVE  
-**Execution baseline:** `2b7c5a59ae456c207ad7fd992210767e68893a24`  
+**Last qualified main before Iteration 11:** `9e31ea07ccd722d8beb14e38d819085b2fa6f4d9`  
 **Reconciled:** 2026-08-31  
 
 This file is the **only execution source of truth**. Architecture/research documents under `docs/` are supporting evidence and design references only; they do not own task state, priority, acceptance, or release readiness.
@@ -66,7 +66,12 @@ The repository currently has:
 - architecture/dependency checks and locked Rust CI;
 - Go server format/vet/test CI gate;
 - pure navigation-policy and browser-capsule state models;
-- transport SPI and deterministic failover model;
+- transport SPI and a deterministic failover controller;
+- failover startup that selects only a `Ready` provider exposing a proxy endpoint;
+- repeated configured high latency participates in failover health;
+- configured-only relay providers no longer claim connectivity;
+- `SecureRelayTransport` fails closed until a real backend exists;
+- explicit client `--config` load/parse failure is fatal instead of silently selecting defaults;
 - Go `ProtectedService` registry and gateway baseline;
 - server-side Ed25519 device proof-of-possession with single-use challenge;
 - session↔device and user↔device binding checks;
@@ -75,11 +80,9 @@ The repository currently has:
 - process spawn failure no longer reported as `RUNNING`;
 - admin/dashboard/release/config/Telegram prototype surfaces.
 
-Current `main` CI at the execution baseline is green for Rust, dependency policy, Go formatting of touched files, `go vet`, and `go test`.
-
 ## 3.2 Not production-qualified
 
-The following are **not** production-ready at the current baseline:
+The following are **not** production-ready:
 
 - real Servo embedding/runtime;
 - real browser network enforcement;
@@ -96,15 +99,13 @@ The following are **not** production-ready at the current baseline:
 - true end-to-end transport/browser/origin qualification;
 - production release/distribution qualification against the real runtime path.
 
-Evidence:
+Important current evidence:
 
 - `crates/webgate-browser/Cargo.toml` has no Servo dependency; `BrowserCapsule` is a state/policy model.
-- `DynamicRelayTransport::state()` returns `Ready` unconditionally and only synthesizes a loopback endpoint.
-- `SecureRelayTransport::start_tunnel()` sets `Ready` without opening a socket or connecting to a relay; its latency probe performs no network I/O.
-- `TransportFailoverController::start()` selects primary without proving provider readiness.
-- `webgate-app` creates `InMemoryDeviceKeyStore`, whose keys/signatures are synthetic.
-- default desktop launch opens Edge/Chrome/system browser without a WebGate proxy binding.
-- `SecureAccessAuthorizer` stores sessions/memberships in process memory and is not an authoritative SecureAcces adapter.
+- configured relay placeholders are deliberately `Offline` until T-036 provides real side effects.
+- `webgate-app` still uses `InMemoryDeviceKeyStore`; this is explicitly tracked by F-032/T-040.
+- desktop system browser is used only for the local control UI; protected navigation remains unavailable while transport is Offline.
+- `SecureAccessAuthorizer` still stores sessions/memberships in process memory and is not authoritative SecureAcces.
 
 ---
 
@@ -146,28 +147,16 @@ Historical F-001..F-028 remain in Git history. Findings below supersede stale co
 **Severity:** Critical  
 **Confidence:** High  
 
-**Evidence:** prior `MASTER_PLAN.md` marked T-004/T-010/T-012/T-013/T-014/T-016/T-027 and related phases `DONE`, while runtime files show no Servo dependency, synthetic keystore, unconditional transport readiness, no relay connection, and system-browser launch.
+Earlier completion criteria measured existence of abstractions/tests instead of observable production side effects, causing false convergence. T-034 restored evidence-based task state and qualification semantics.
 
-**Root cause:** completion criteria measured existence of abstractions/tests instead of observable production side effects.
+## F-030 — Client transport readiness was synthetic
 
-**Impact:** false convergence, unsafe release claims, wrong task priority, and green CI that cannot prove the intended system path.
-
-**Affected invariants:** I-001, I-003–I-005, I-008, I-011–I-014, I-020–I-022.
-
-**Resolution direction:** T-034 restores truthful statuses and qualification semantics.
-
-## F-030 — Client transport readiness is synthetic
-
-**Status:** OPEN  
+**Status:** PARTIALLY RESOLVED / CONTAINED by T-035  
 **Category:** Network / Correctness / Security  
 **Severity:** Critical  
 **Confidence:** High  
 
-`DynamicRelayTransport` always reports `Ready`; `SecureRelayTransport::start_tunnel()` performs no network operation; failover startup does not validate readiness.
-
-**Impact:** UI/capsule can believe a protected path exists when no listener/tunnel exists.
-
-**Resolution:** T-035 then T-036/T-042.
+Characterization on commit `c7ecb7759a16d6ec53334ce0f04428c70fa0548a` proved old startup selected Offline providers, accepted `Ready` without an endpoint, ignored the high-latency threshold and selected an unready fallback. T-035 removes those false-success states. The finding remains open until T-036 supplies a real bound/probed transport provider.
 
 ## F-031 — Protected browser path is not a real Servo/proxied runtime
 
@@ -176,11 +165,7 @@ Historical F-001..F-028 remain in Git history. Findings below supersede stale co
 **Severity:** Critical  
 **Confidence:** High  
 
-`webgate-browser` currently models state/policy only. Desktop launcher opens Edge/Chrome/default browser without binding protected traffic to the WebGate proxy.
-
-**Impact:** I-001/I-003/I-004 cannot be claimed.
-
-**Resolution:** T-041.
+`webgate-browser` currently models state/policy only. The local desktop control UI may open in Edge/Chrome/system browser, but protected resources must not do so. Real protected browser ownership is T-041.
 
 ## F-032 — Production entrypoint uses synthetic device keys
 
@@ -189,7 +174,7 @@ Historical F-001..F-028 remain in Git history. Findings below supersede stale co
 **Severity:** Critical  
 **Confidence:** High  
 
-`webgate-app` instantiates `InMemoryDeviceKeyStore`; implementation generates deterministic synthetic material and synthetic signatures.
+`webgate-app` still instantiates `InMemoryDeviceKeyStore`; implementation generates synthetic key material/signatures. T-035 now labels this limitation explicitly instead of treating it as production qualification.
 
 **Resolution:** T-040.
 
@@ -211,7 +196,7 @@ Historical F-001..F-028 remain in Git history. Findings below supersede stale co
 **Severity:** Critical  
 **Confidence:** High  
 
-No production Origin agent currently establishes persistent outbound connections to independent relays. Therefore the core “server behind CGNAT without public IP” path is not implemented end-to-end.
+No production Origin agent currently establishes persistent outbound connections to independent relays. The core “server behind CGNAT without public IP” path is not implemented end-to-end.
 
 **Resolution:** T-037.
 
@@ -222,48 +207,61 @@ No production Origin agent currently establishes persistent outbound connections
 **Severity:** High  
 **Confidence:** High  
 
-Registries, sessions/memberships, audit/process/release state are primarily memory-backed.
+Registries, local sessions/memberships, audit/process/release state are primarily memory-backed.
 
 **Resolution:** T-039.
 
 ## F-036 — Admin authentication is only an interim shared token
 
-**Status:** OPEN / contained  
+**Status:** OPEN / CONTAINED  
 **Category:** Admin Security  
 **Severity:** High  
 **Confidence:** High  
 
-P0 hardening moved Admin to a separate loopback listener and requires a strong `WEBGATE_ADMIN_TOKEN`. This contains remote exposure but is not the target SecureAcces-backed administrator/session/device authorization model.
+P0 hardening moved Admin to a separate loopback listener and requires a strong `WEBGATE_ADMIN_TOKEN`. This is containment, not the target SecureAcces-backed administrator/session/device model.
 
-**Resolution:** T-038. The shared token remains an interim bootstrap/control boundary only.
+**Resolution:** T-038.
 
-## F-037 — Client configuration load can fail open to defaults
+## F-037 — Explicit client config failed open to defaults
 
-**Status:** OPEN  
+**Status:** RESOLVED by T-035  
 **Category:** Configuration / Fail-Closed  
 **Severity:** High  
 **Confidence:** High  
 
-`ClientConfigProfile::load_from_file(...).unwrap_or_default()` silently substitutes defaults after an explicitly requested config fails to load/parse.
+Old `ClientConfigProfile::load_from_file(...).unwrap_or_default()` silently substituted defaults after an explicitly requested file failed. T-035 separates “no config requested” from “requested config invalid/unavailable” and fails the latter path.
 
-**Resolution:** T-035.
-
-## F-038 — CI does not yet enforce race/mutation/security depth promised by the plan
+## F-038 — CI lacks race/mutation/security depth promised by the plan
 
 **Status:** OPEN  
 **Category:** Test System / CI  
 **Severity:** High  
 **Confidence:** High  
 
-Go `vet/test` is now gated, but `go test -race`, meaningful mutation testing and targeted fuzz/property gates are not yet required by CI.
+Go `vet/test` is gated, but `go test -race`, pinned mutation tooling and targeted fuzz/property gates are not yet required by CI.
 
 **Resolution:** T-044.
+
+## F-039 — Runtime config binding reports success after parse/apply failure
+
+**Status:** OPEN  
+**Category:** Configuration / API Correctness / Observability  
+**Severity:** High  
+**Confidence:** High  
+
+During T-035 review, `POST /api/bind_config` in the local client control server was observed to attempt parse/write opportunistically but always return HTTP 200 `{"status":"ok"}`. Invalid content or poisoned lock therefore cannot be distinguished by the caller.
+
+**Root cause:** parse/apply errors are discarded inside an untyped ad-hoc HTTP handler.
+
+**Affected invariants:** I-003, I-005, I-019, I-020.
+
+**Decision:** do not expand T-035's CLI/bootstrap contract into a runtime HTTP protocol migration. Split T-048.
 
 ---
 
 # 6. Reconciled task state
 
-Status meanings: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS_REQUALIFICATION`, `DEFERRED`.
+Status meanings: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS_REQUALIFICATION`, `TODO`, `DEFERRED`.
 
 ## 6.1 Trusted completed foundations
 
@@ -274,68 +272,54 @@ Status meanings: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS_R
 - **T-007 — Strict navigation/deep-link policy model:** DONE.
 - **T-009 — Algorithm-agile device identity model:** DONE.
 - **T-021 — ProtectedService registry baseline:** DONE as in-memory domain baseline.
-- **T-022 — Multi-service gateway baseline:** DONE as local server baseline; additional SSRF/persistence qualification remains.
+- **T-022 — Multi-service gateway baseline:** DONE as local server baseline; SSRF/persistence qualification remains.
 - **T-024 — Admin UI prototype:** DONE as UI capability, not production admin-security qualification.
 - **T-025 — Server device registry + real Ed25519 PoP:** DONE for current in-memory server registry.
-- **T-030 — Process spawn/lifecycle baseline:** DONE after P0 false-Running fix; deeper supervision remains later reliability scope.
+- **T-030 — Process spawn/lifecycle baseline:** DONE after false-Running fix; deeper supervision remains reliability scope.
 - **T-032 — Editorial UI transformation:** DONE.
+- **T-034 — Restore execution truth and qualification semantics:** DONE.
+- **T-035 — Eliminate false readiness and fail-open client bootstrap:** DONE after green work-branch qualification and fast-forward to `main`.
 
 ## 6.2 Reopened / requalification-required historical tasks
 
-- **T-004 — Real Servo embedding adapter:** REOPENED; current browser crate has no Servo dependency/runtime.
+- **T-004 — Real Servo embedding adapter:** REOPENED; current browser crate has no Servo runtime dependency.
 - **T-005 — Real fail-closed browser networking:** REOPENED; current capsule proves policy state, not real browser network behavior.
-- **T-008 — Failover controller:** REOPENED for readiness/startup semantics and real provider observations.
+- **T-008 — Failover controller:** core false-readiness semantics repaired by T-035; real-provider qualification remains T-036/T-042.
 - **T-010 — Platform device-key adapters:** REOPENED; production entrypoint still uses synthetic in-memory keystore.
 - **T-011 — SecureAcces integration:** REOPENED; current authorizer is local memory state.
 - **T-012 — Primary production transport:** REOPENED.
 - **T-013 — Independent fallback/dual-relay:** REOPENED.
 - **T-014 — Servo/site/security/performance qualification:** REOPENED.
 - **T-015 — Production release authority:** NEEDS_REQUALIFICATION after real runtime/security path exists.
-- **T-016 — Final adversarial re-audit:** REOPENED by F-029..F-038.
+- **T-016 — Final adversarial re-audit:** REOPENED by F-029..F-039.
 - **T-019 — Trusted broker boundary:** NEEDS_REQUALIFICATION against real browser/process boundary.
 - **T-023 — Admin Control API:** NEEDS_REQUALIFICATION; loopback + token is interim auth only.
 - **T-026 — Audit/health operations:** NEEDS_REQUALIFICATION with durable state and end-to-end health.
 - **T-027 — Full adversarial E2E qualification:** REOPENED; current tests do not traverse real browser→transport→relay→origin path.
 - **T-028 — Telegram/release distribution:** NEEDS_REQUALIFICATION against authoritative users/devices/releases and real client runtime.
-- **T-029 — Config profile binding:** REOPENED for fail-closed explicit-config behavior and signed policy trust.
+- **T-029 — Config profile binding:** CLI explicit-load fail-open repaired by T-035; signed policy/runtime binding remain open.
 - **T-031 — Telegram Admin Bot lifecycle:** NEEDS_REQUALIFICATION under target admin authorization and persistence model.
-- **T-033 — Integrity audit:** historical audit complete, but its production-completeness conclusion is superseded by F-029..F-038.
+- **T-033 — Integrity audit:** historical audit complete, but production-completeness conclusions are superseded by F-029..F-039.
 
-## 6.3 New execution tasks
-
-### T-034 — Restore execution truth and qualification semantics
-
-**Status:** DONE  
-**Priority:** P0  
-**Type:** PROCESS / PLAN / SAFETY
-
-Replace stale false-DONE state with evidence-based capability states; establish that supporting docs are non-authoritative; record current Critical/High findings and new dependency order.
-
-Acceptance:
-
-- `MASTER_PLAN.md` reflects current code evidence;
-- simulated/model capabilities cannot be interpreted as production-qualified;
-- open Critical/High findings are explicit;
-- next task is selected by risk/dependency leverage.
+## 6.3 Active execution tasks
 
 ### T-035 — Eliminate false readiness and fail-open client bootstrap
 
-**Status:** READY  
+**Status:** DONE  
 **Priority:** P0  
 **Type:** CORRECTNESS / SECURITY / FOUNDATION
 
-Root causes addressed: F-030 startup semantics and F-037 explicit config fallback.
+Acceptance satisfied:
 
-Scope:
-
-- failover startup must not select a provider that is not actually `Ready` with a loopback endpoint;
-- prefer a ready fallback only when the primary is unavailable and fallback is actually ready;
-- if neither is ready, aggregate state is `Offline` and proxy is `None`;
-- high-latency policy must not be dead configuration;
-- explicit client `--config` parse/load failure is fatal and never silently replaced by defaults;
-- production app must stop claiming `ready` solely from configured relay port.
-
-Characterization/negative tests precede production changes.
+- startup never selects provider solely because it is configured;
+- `Ready` without proxy endpoint is unusable;
+- ready fallback can be selected if primary is unavailable;
+- unready fallback causes fail-closed Offline state;
+- repeated latency above configured threshold counts toward failover;
+- `SecureRelayTransport` no longer simulates tunnel start/probe success;
+- explicit invalid/missing `--config` does not silently become defaults;
+- control UI status/navigate responses do not claim a protected proxy while transport is Offline;
+- regression/negative tests exist.
 
 ### T-036 — Implement real destination-restricted loopback proxy + primary provider
 
@@ -343,7 +327,7 @@ Characterization/negative tests precede production changes.
 **Priority:** P0  
 **Type:** NETWORK / SECURITY
 
-Implement a real listener, destination allowlist, bounded CONNECT/SOCKS semantics as selected, provider lifecycle, authenticated control boundary, cancellation and health. `Ready` requires a bound listener plus working protected upstream path.
+Implement a real listener, destination allowlist, bounded proxy semantics, provider lifecycle, authenticated control boundary, cancellation and health. `Ready` requires real side effects and protected-path evidence.
 
 ### T-037 — Implement Origin agent and reverse Relay A/B connectivity
 
@@ -351,7 +335,7 @@ Implement a real listener, destination allowlist, bounded CONNECT/SOCKS semantic
 **Priority:** P0  
 **Type:** NETWORK / CGNAT / RELIABILITY
 
-Implement persistent outbound Origin connections, authentication, multiplexed streams, reconnect/backoff, relay registration, graceful rotation and local gateway forwarding. Prove operation with no inbound port forwarding.
+Persistent outbound Origin connections, authentication, multiplexed streams, reconnect/backoff, relay registration, graceful rotation and local gateway forwarding. Prove no inbound port forwarding is needed.
 
 ### T-038 — Integrate authoritative SecureAcces + administrator authorization
 
@@ -359,7 +343,7 @@ Implement persistent outbound Origin connections, authentication, multiplexed st
 **Priority:** P0  
 **Type:** AUTHORIZATION / ADMIN SECURITY
 
-Replace production in-memory session/membership authority with a narrow SecureAcces adapter; preserve local fake only as test fixture. Bind admin identity/session/device/management permission. Unknown/unavailable authorization fails closed.
+Replace production in-memory session/membership authority with a narrow SecureAcces adapter; local fake remains test-only. Bind admin identity/session/device/management permission. Unknown/unavailable authorization fails closed.
 
 ### T-039 — Durable transactional server state
 
@@ -367,7 +351,7 @@ Replace production in-memory session/membership authority with a narrow SecureAc
 **Priority:** P0/P1  
 **Type:** PERSISTENCE / RELIABILITY
 
-Persist WebGate-owned service/device/release/audit/config metadata using a transactional store (SQLite is preferred for the small deployment unless evidence requires otherwise). SecureAcces-owned identity/permission data remains SecureAcces-owned.
+Persist WebGate-owned service/device/release/audit/config metadata using a transactional store. SQLite is preferred for the small deployment unless measurements require otherwise. SecureAcces-owned identity/permission data remains SecureAcces-owned.
 
 ### T-040 — Production platform key stores
 
@@ -375,7 +359,7 @@ Persist WebGate-owned service/device/release/audit/config metadata using a trans
 **Priority:** P0  
 **Type:** IDENTITY / PLATFORM SECURITY
 
-Windows CNG/DPAPI/TPM-backed implementation, Android Keystore, and explicit assurance-tier fallbacks for other platforms. `InMemoryDeviceKeyStore` becomes test/dev-only and production build/runtime must reject it.
+Windows CNG/DPAPI/TPM-backed implementation, Android Keystore, explicit assurance-tier fallbacks elsewhere. `InMemoryDeviceKeyStore` becomes test/dev-only and production build/runtime rejects it.
 
 ### T-041 — Real Servo runtime and enforced protected proxy
 
@@ -383,7 +367,7 @@ Windows CNG/DPAPI/TPM-backed implementation, Android Keystore, and explicit assu
 **Priority:** P0  
 **Type:** BROWSER / SECURITY BOUNDARY
 
-Integrate actual Servo runtime, configure protected networking before navigation, remove unproxied protected system-browser fallback, and prove direct-egress negative cases.
+Integrate actual Servo runtime, configure protected networking before navigation, remove any protected system-browser fallback, and prove direct-egress negatives.
 
 ### T-042 — Real dual-transport / dual-relay failover
 
@@ -395,7 +379,7 @@ At least four logical route candidates across two independent relay failure doma
 
 ### T-043 — Harden upstream routing and SSRF containment
 
-**Status:** TODO  
+**Status:** READY  
 **Priority:** P0  
 **Type:** SERVER SECURITY
 
@@ -415,7 +399,7 @@ Add relevant `go test -race`, pinned mutation tooling, meaningful mutation targe
 **Priority:** P0 before release  
 **Type:** E2E / SECURITY / CHAOS
 
-Qualify real client→proxy→transport→relay→reverse-Origin→gateway→SecureAcces→service flow, including network transitions, revocation, relay/provider failure, restart, CGNAT/no-port-forward deployment and 24h soak.
+Qualify real client→proxy→transport→relay→reverse-Origin→gateway→SecureAcces→service flow, including network transitions, revocation, relay/provider failure, restart, CGNAT/no-port-forward deployment and soak.
 
 ### T-046 — Requalify release/distribution against production runtime
 
@@ -433,10 +417,18 @@ Re-run packaging/signing/Telegram/update claims only after T-038/T-040/T-041/T-0
 
 Full architecture/security/reliability/persistence/API/tests/mutation/CI/performance re-audit. Delete obsolete prototype paths. Convergence requires zero unresolved Critical findings and no unaccepted High findings.
 
+### T-048 — Make runtime client config binding transactional and fail closed
+
+**Status:** TODO  
+**Priority:** P1/HIGH  
+**Type:** CONFIGURATION / API CORRECTNESS
+
+Characterize `POST /api/bind_config`; replace ad-hoc success response with typed parse/apply result, bounded body parsing and atomic profile swap. Invalid content, poisoned lock or apply failure must return explicit error and leave the last valid profile unchanged.
+
 ### T-017 — Enforce verified-main repository rule
 
 **Status:** BLOCKED  
-**Priority:** P2  
+**Priority:** P2
 
 Repository settings mutation is not currently available through the connected GitHub action surface. Continue independent work; never force push.
 
@@ -445,18 +437,19 @@ Repository settings mutation is not currently available through the connected Gi
 # 7. Dependency DAG and priority
 
 ```text
-T-034 DONE
-   ↓
-T-035 false-readiness/fail-open removal
+T-034 DONE → T-035 DONE
+
+T-035
    ├──→ T-036 real local proxy + primary transport
    │       ├──→ T-037 Origin reverse connectivity
    │       └──→ T-042 multi-provider/multi-relay failover
    ├──→ T-040 platform keystore
-   └──→ T-041 real Servo/proxy enforcement
+   ├──→ T-041 real Servo/proxy enforcement
+   └──→ T-048 runtime config transaction
 
-T-038 SecureAcces authority ─┐
-T-039 durable state ─────────┼→ T-045 real system qualification
-T-043 SSRF hardening ────────┤
+T-043 SSRF hardening ─────────┐
+T-038 SecureAcces authority ──┤
+T-039 durable state ──────────┼→ T-045 real system qualification
 T-037/T-040/T-041/T-042 ─────┘
 
 T-044 trustworthy CI supports every track and must land before T-045 final qualification.
@@ -465,12 +458,12 @@ T-045 → T-046 → T-047 convergence.
 
 Current ordering by risk/dependency leverage:
 
-1. **T-035** — prevents false security state and gives later tests trustworthy semantics.
-2. **T-043 / T-038** — server trust boundaries.
-3. **T-039** — durable state required before meaningful restart/revocation qualification.
+1. **T-043** — server gateway is already runnable; close its SSRF/pivot boundary before adding real remote connectivity.
+2. **T-038** — authoritative authorization/admin trust boundary.
+3. **T-039** — durable state before restart/revocation qualification.
 4. **T-036 / T-037** — actual protected path and no-public-IP product core.
 5. **T-040 / T-041** — real identity and browser boundaries.
-6. **T-044 / T-042** — stronger feedback and resilient multi-path operation.
+6. **T-044 / T-042 / T-048** — stronger feedback, resilient multi-path, runtime config correctness.
 7. **T-045 / T-046 / T-047** — real qualification, release requalification, convergence.
 
 Priority is recalculated after every successful push or material finding.
@@ -533,23 +526,18 @@ INPUT × STATE × CONCURRENCY × TIMING × FAILURE × PERMISSIONS ×
 CONFIGURATION × EXTERNAL STATE × VERSION × PLATFORM × RESOURCE PRESSURE
 ```
 
-Baseline technique: equivalence partitions + boundary values + pairwise, then high-risk N-wise combinations, property/fuzz exploration and known production failure vectors.
+T-035 covered representative combinations:
 
-Critical network examples:
+- provider state: Ready / Offline;
+- endpoint: present / absent;
+- primary vs fallback readiness combinations;
+- success with normal vs pathological latency;
+- repeated failure threshold boundary;
+- zero latency threshold semantics;
+- explicit config absent vs explicitly missing;
+- UI reporting with no protected endpoint.
 
-- malformed/empty/stale signed config;
-- configured relay with no listener;
-- listener exists but relay/origin is unavailable;
-- primary failure during active stream;
-- both relays unavailable;
-- UDP unavailable / TCP fallback only;
-- DNS resolution failure/rebinding;
-- Wi-Fi→Ethernet/hotspot transition;
-- suspend/resume;
-- Origin IP/router change;
-- revocation during active request;
-- process crash during failover;
-- resource exhaustion and bounded queues.
+Future network work additionally covers listener exists but relay/origin unavailable, active-stream failure, both relays unavailable, UDP restricted, DNS failure/rebinding, network transition, suspend/resume, Origin IP change, revocation during request, process crash and resource pressure.
 
 ---
 
@@ -566,25 +554,21 @@ Mutation testing is mandatory where technically applicable for:
 - release promotion/revocation;
 - critical retry/circuit-breaker decisions.
 
-Track semantic survivors, not raw score alone. Equivalent mutants are classified explicitly. A survived security mutant creates or updates a Finding before test changes.
+For T-035, tests are specifically expected to kill semantic mutations such as:
+
+- `Ready && endpoint` → `Ready || endpoint`;
+- primary readiness branch inverted;
+- fallback readiness check removed;
+- `latency > threshold` ignored or boundary changed incorrectly;
+- explicit config error converted to default success.
+
+Pinned automated mutation infrastructure remains T-044. Manual semantic mutation evidence may be used before T-044 but does not replace it.
 
 ---
 
-# 11. Performance and reliability budgets
+# 11. Performance and reliability discipline
 
-Do not optimize before measurement. T-045 establishes hard budgets from a real topology. Initial measurements must include:
-
-- client start→protected proxy ready;
-- protected navigation cold/warm latency;
-- Client↔Relay RTT and Relay↔Origin RTT;
-- proxy/gateway overhead;
-- failover interruption duration;
-- Origin reconnect after IP/router change;
-- concurrent request throughput;
-- CPU/RSS/allocations;
-- lock contention;
-- authorization/revocation convergence;
-- 24h connection stability.
+Do not optimize before measurement. T-045 establishes hard budgets from a real topology. Measurements include startup→protected proxy ready, protected navigation cold/warm latency, Client↔Relay RTT, Relay↔Origin RTT, proxy/gateway overhead, failover interruption, Origin reconnect, throughput, CPU/RSS/allocations, lock contention, authorization/revocation convergence and long-session stability.
 
 Security/correctness cannot be traded for benchmark wins.
 
@@ -615,7 +599,7 @@ Every recurring defect class should gain a prevention/detection mechanism, not o
 
 # 13. Iteration log
 
-Historical Iterations 1–9 are preserved in Git history before T-034. Their implementation artifacts remain useful, but production-completeness claims superseded by F-029..F-038 are no longer authoritative.
+Historical Iterations 1–9 are preserved in Git history before T-034. Their implementation artifacts remain useful, but production-completeness claims superseded by F-029..F-039 are no longer authoritative.
 
 ## Iteration 10
 
@@ -623,13 +607,32 @@ Historical Iterations 1–9 are preserved in Git history before T-034. Their imp
 **Findings addressed:** F-029  
 **Unexpected findings recorded:** F-030..F-038  
 **Changes:** replaced stale false-converged plan with evidence-based current state, reopened unqualified capabilities, established supporting-doc non-authority, rebuilt task DAG and acceptance semantics.  
-**Tests:** evidence reconciliation against current source and green baseline CI; no production code changed.  
+**Tests:** evidence reconciliation against current source; `main` CI run 37 passed Rust/project/architecture/dependency and Go gates.  
 **Mutation:** N/A — documentation/process task.  
-**Plan changes:** major truth reconciliation; next task T-035.  
+**Plan changes:** major truth reconciliation; selected T-035.  
 **Process improvements:** a capability cannot be `DONE` unless observable production side effects and qualification evidence exist; mocks/state models are explicitly distinguished from runtime capability.  
-**Commit:** SELF — see the Git commit containing this log.  
+**Commit:** `9e31ea07ccd722d8beb14e38d819085b2fa6f4d9`  
 **Push:** `main`  
-**Result:** PASS when remote HEAD contains this plan.
+**Result:** PASS.
+
+## Iteration 11
+
+**Task:** T-035 — Eliminate false readiness and fail-open client bootstrap  
+**Findings addressed:** F-030 (contained/partial), F-037 (resolved)  
+**Unexpected findings:** F-039 split to T-048  
+**Characterization:** test-only branch commit `c7ecb7759a16d6ec53334ce0f04428c70fa0548a` produced expected RED after formatter/check passed: five failover contract tests failed on old logic (Offline primary selection, missing endpoint acceptance, ignored latency threshold, unready fallback). This red branch is not merged to main.  
+**Changes:** failover selects only actually Ready providers with endpoints; fallback is readiness-checked; repeated high latency participates in health; configured relay placeholders and incomplete `SecureRelayTransport` no longer advertise Ready/proxy success; explicit requested config load failure is fatal; local UI status/navigation no longer claim protected connectivity while Offline.  
+**Tests:** startup primary/fallback matrix, endpoint absence, dual-offline, latency threshold/boundary, unready fallback, explicit missing config, configured-only provider, offline proxy serialization, existing failover regressions.  
+**Mutation:** pinned automatic tooling is still F-038/T-044; test contracts target condition-inversion/removal mutants for provider readiness, endpoint presence, fallback readiness, latency threshold and explicit-config error handling. Manual semantic mutation check is performed on the green candidate before main promotion.  
+**Race:** no new shared mutable transport state; controller remains single-owner. Full Go race gate is tracked by T-044.  
+**Security:** I-003/I-005/I-006/I-020 strengthened; incomplete provider state is deny/offline.  
+**Performance:** no optimization; state checks are O(1), no I/O added.  
+**Compatibility:** explicit invalid `--config` changes from silent default to intentional fail-closed error; this is a security contract correction.  
+**Plan reconciliation:** T-035 DONE after green branch qualification; F-037 resolved; F-030 contained until T-036; F-039/T-048 added; next task T-043.  
+**Process learning:** use isolated red characterization branches to prove pre-fix behavior, then build one clean atomic candidate from qualified `main`; never merge intentionally red commits.  
+**Commit:** SELF — the Git commit containing this log.  
+**Push:** `main` after work-branch CI and semantic mutation evidence pass.  
+**Result:** PASS when remote `main` contains the verified candidate.
 
 ---
 
@@ -637,7 +640,7 @@ Historical Iterations 1–9 are preserved in Git history before T-034. Their imp
 
 ```text
 CURRENT HEAD: resolve from remote main before next iteration
-CURRENT QUALIFIED MILESTONE: P0 server hardening baseline; production protected network path NOT qualified
+CURRENT QUALIFIED MILESTONE: false-readiness containment complete; production protected network path NOT qualified
 
 ARCHITECTURE:
 - Rust client contracts + Go server gateway
@@ -647,66 +650,72 @@ ARCHITECTURE:
 
 CRITICAL INVARIANTS:
 - no false Ready/Running
-- no direct protected egress/system-browser fallback
+- no direct protected egress/system-browser protected fallback
 - session bound to device/user
 - real device PoP; production keys platform-backed
 - origin works behind CGNAT without inbound ports
 - admin/data planes isolated and authorized
 - routing/upstreams server-owned and non-generic
 
-COMPLETED THIS ITERATION:
-- T-034
+COMPLETED RECENTLY:
+- T-034 execution truth reconciliation
+- T-035 false-readiness + explicit-config fail-closed
 
-RESOLVED FINDINGS:
-- F-029
+RESOLVED/CONTAINED FINDINGS:
+- F-029 resolved
+- F-030 contained/partial until real provider
+- F-037 resolved
 
 OPEN CRITICAL/HIGH FINDINGS:
-- F-030 synthetic transport readiness
+- F-030 real provider still absent
 - F-031 no real Servo/proxied browser runtime
 - F-032 synthetic production keystore
 - F-033 SecureAcces surrogate
 - F-034 no Origin reverse connectivity
 - F-035 ephemeral state
 - F-036 interim shared-token admin auth
-- F-037 explicit client config can fail open
 - F-038 race/mutation CI gap
+- F-039 runtime config bind false-success
 
 BLOCKERS:
 - T-017 repository-setting write capability unavailable
-- real external relay/VPS/hardware validation may require external environment later; local deterministic implementation/tests can proceed
+- external relay/VPS/hardware qualification may require environment later; deterministic implementation/tests can proceed
 
 NEXT TASK:
-- T-035 Eliminate false readiness and fail-open client bootstrap
+- T-043 Harden upstream routing and SSRF containment
 
 WHY NEXT:
-- highest dependency leverage: prevents security-state lies before real transport/browser work and makes subsequent tests trustworthy
+- server gateway is already runnable and will become remotely reachable through future reverse transport; close SSRF/pivot boundary before adding that connectivity
 
 CRITICAL FILES:
 - MASTER_PLAN.md
 - crates/webgate-app/src/main.rs
 - crates/webgate-transport/src/failover.rs
 - crates/webgate-transport/src/relay.rs
-- crates/webgate-platform/src/keystore.rs
-- server/pkg/auth/secureaccess.go
-- server/cmd/webgate-server/main.go
+- server/pkg/gateway/gateway.go
+- server/pkg/domain/service.go
+- server/pkg/registry/service_registry.go
 
-VERIFICATION COMMANDS:
-- Rust/Python/architecture suite from section 8
-- Go vet/test from section 8
-- race/mutation tracked by T-044
+VERIFICATION:
+- Rust/Python/architecture/dependency suite
+- Go format/vet/test
+- T-044 adds race/mutation/fuzz gates
 
 IMPORTANT DECISIONS:
-- supporting implementation/research docs are non-authoritative for execution state
-- production readiness requires real side effects + end-to-end evidence
+- configured endpoints are not readiness
+- incomplete provider = Offline, no synthetic proxy
+- explicit requested config failure = deny/fatal
+- local control UI browser is not protected browser runtime
 - no force push
 
 REJECTED OPTIONS:
-- treating mocks/models as production qualification
-- hiding stale task state behind historical DONE labels
-- parallel roadmap outside MASTER_PLAN.md
+- preserve fake Ready for demo UX
+- silently default after explicit config failure
+- merge red characterization commit
+- widen T-035 into runtime bind protocol or real VPN implementation
 
 NEW PROCESS LEARNING:
-- task completion criteria must name observable production behavior, not only code artifacts/tests
+- RED characterization can be preserved off-main and cited as evidence while main receives one green logical implementation commit
 ```
 
 ---
