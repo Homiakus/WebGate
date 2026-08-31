@@ -10,10 +10,10 @@ import (
 )
 
 var (
-	ErrServiceNotFound     = errors.New("service not found")
+	ErrServiceNotFound      = errors.New("service not found")
 	ErrServiceAlreadyExists = errors.New("service with this ID already exists")
-	ErrSlugCollision       = errors.New("service with this slug already exists")
-	ErrServiceInactive     = errors.New("service is inactive or disabled")
+	ErrSlugCollision        = errors.New("service with this slug already exists")
+	ErrServiceInactive      = errors.New("service is inactive or disabled")
 )
 
 type ServiceRegistry struct {
@@ -29,33 +29,39 @@ func NewServiceRegistry() *ServiceRegistry {
 	}
 }
 
-// Register adds a new validated ProtectedService to the registry.
+// Register adds a new validated ProtectedService to the registry. The registry
+// owns an isolated copy so callers cannot mutate registered state outside the
+// lock/validation/versioning boundary.
 func (r *ServiceRegistry) Register(svc *domain.ProtectedService) error {
-	if err := svc.Validate(); err != nil {
+	candidate := cloneProtectedService(svc)
+	if candidate == nil {
+		return fmt.Errorf("validation error: %w", domain.ErrInvalidServiceID)
+	}
+	if err := candidate.Validate(); err != nil {
 		return fmt.Errorf("validation error: %w", err)
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, exists := r.byID[svc.ID]; exists {
+	if _, exists := r.byID[candidate.ID]; exists {
 		return ErrServiceAlreadyExists
 	}
-	if _, exists := r.bySlug[svc.Slug]; exists {
+	if _, exists := r.bySlug[candidate.Slug]; exists {
 		return ErrSlugCollision
 	}
 
 	now := time.Now().UTC()
-	svc.CreatedAt = now
-	svc.UpdatedAt = now
-	svc.Version = 1
+	candidate.CreatedAt = now
+	candidate.UpdatedAt = now
+	candidate.Version = 1
 
-	r.byID[svc.ID] = svc
-	r.bySlug[svc.Slug] = svc
+	r.byID[candidate.ID] = candidate
+	r.bySlug[candidate.Slug] = candidate
 	return nil
 }
 
-// GetByID returns the service by its unique ID.
+// GetByID returns a detached snapshot of the service by its unique ID.
 func (r *ServiceRegistry) GetByID(id string) (*domain.ProtectedService, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -64,10 +70,10 @@ func (r *ServiceRegistry) GetByID(id string) (*domain.ProtectedService, error) {
 	if !ok {
 		return nil, ErrServiceNotFound
 	}
-	return svc, nil
+	return cloneProtectedService(svc), nil
 }
 
-// ResolveBySlug returns the service by its routing slug.
+// ResolveBySlug returns a detached snapshot of the service by its routing slug.
 func (r *ServiceRegistry) ResolveBySlug(slug string) (*domain.ProtectedService, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -76,17 +82,17 @@ func (r *ServiceRegistry) ResolveBySlug(slug string) (*domain.ProtectedService, 
 	if !ok {
 		return nil, ErrServiceNotFound
 	}
-	return svc, nil
+	return cloneProtectedService(svc), nil
 }
 
-// List returns a snapshot slice of all registered services.
+// List returns detached snapshots of all registered services.
 func (r *ServiceRegistry) List() []*domain.ProtectedService {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	list := make([]*domain.ProtectedService, 0, len(r.byID))
 	for _, svc := range r.byID {
-		list = append(list, svc)
+		list = append(list, cloneProtectedService(svc))
 	}
 	return list
 }
@@ -141,12 +147,36 @@ func (r *ServiceRegistry) UpdateExecutable(id string, port int, execPath string,
 	svc.Port = port
 	svc.ExecutablePath = execPath
 	if len(execArgs) > 0 {
-		svc.ExecArgs = execArgs
+		svc.ExecArgs = append([]string(nil), execArgs...)
 	}
 	if port > 0 {
 		svc.UpstreamURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	}
 	svc.Version++
+	svc.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// UpdateProcessRuntime records process-manager-owned runtime state through the
+// registry lock. Runtime PID/state changes intentionally do not increment the
+// durable configuration Version.
+func (r *ServiceRegistry) UpdateProcessRuntime(id string, state domain.ProcessState, pid int, startedAt *time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	svc, ok := r.byID[id]
+	if !ok {
+		return ErrServiceNotFound
+	}
+
+	svc.ProcessState = state
+	svc.ProcessPID = pid
+	if startedAt == nil {
+		svc.StartedAt = nil
+	} else {
+		startedCopy := startedAt.UTC()
+		svc.StartedAt = &startedCopy
+	}
 	svc.UpdatedAt = time.Now().UTC()
 	return nil
 }
@@ -189,7 +219,7 @@ func (r *ServiceRegistry) UpdateFull(id, name, slug, description string, port in
 	svc.Description = description
 	svc.Port = port
 	svc.ExecutablePath = execPath
-	svc.ExecArgs = execArgs
+	svc.ExecArgs = append([]string(nil), execArgs...)
 	svc.WorkingDir = workingDir
 	svc.AutoStart = autoStart
 
@@ -200,4 +230,17 @@ func (r *ServiceRegistry) UpdateFull(id, name, slug, description string, port in
 	svc.Version++
 	svc.UpdatedAt = time.Now().UTC()
 	return nil
+}
+
+func cloneProtectedService(svc *domain.ProtectedService) *domain.ProtectedService {
+	if svc == nil {
+		return nil
+	}
+	clone := *svc
+	clone.ExecArgs = append([]string(nil), svc.ExecArgs...)
+	if svc.StartedAt != nil {
+		startedAt := *svc.StartedAt
+		clone.StartedAt = &startedAt
+	}
+	return &clone
 }
