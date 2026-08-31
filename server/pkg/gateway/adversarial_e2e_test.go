@@ -15,9 +15,7 @@ import (
 )
 
 func TestAdversarialE2EQualification(t *testing.T) {
-	// 1. Setup multi-service upstreams
 	docsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check that internal headers were stripped
 		if r.Header.Get("X-WebGate-Session") != "" {
 			http.Error(w, "internal session header leaked", http.StatusBadGateway)
 			return
@@ -33,7 +31,6 @@ func TestAdversarialE2EQualification(t *testing.T) {
 	}))
 	defer factoryServer.Close()
 
-	// 2. Registries and Auth
 	svcReg := registry.NewServiceRegistry()
 	_ = svcReg.Register(&domain.ProtectedService{
 		ID:          "svc_docs",
@@ -51,14 +48,7 @@ func TestAdversarialE2EQualification(t *testing.T) {
 	})
 
 	devReg := registry.NewDeviceRegistry()
-	_ = devReg.Enroll(&domain.Device{
-		ID:           "dev_alice",
-		UserID:       "alice",
-		Status:       domain.DeviceStatusActive,
-		PublicKeyHex: "alice_pub",
-	})
-	chal, _ := devReg.CreateChallenge("dev_alice", time.Minute)
-	_ = devReg.VerifyAndActivate(chal.ChallengeID, "alice_sig")
+	enrollAndActivateTestDevice(t, devReg, "dev_alice", "alice")
 
 	authorizer := auth.NewSecureAccessAuthorizer()
 	authorizer.RegisterSession(&auth.UserSession{
@@ -67,14 +57,12 @@ func TestAdversarialE2EQualification(t *testing.T) {
 		DeviceID:  "dev_alice",
 		ExpiresAt: time.Now().UTC().Add(time.Hour),
 	})
-	// Alice only has access to Docs
 	authorizer.SetMembership("alice", "ws_docs", domain.PermView|domain.PermEdit)
 
 	gw := gateway.NewServerGateway(svcReg, devReg, authorizer, gateway.GatewayConfig{
 		ProxyTimeout: 5 * time.Second,
 	})
 
-	// Scenario 1: Authorized access to Docs -> 200 OK
 	t.Run("authorized_service_access", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/svc/docs/index", nil)
 		req.Header.Set("X-WebGate-Session", "sess_alice")
@@ -87,7 +75,6 @@ func TestAdversarialE2EQualification(t *testing.T) {
 		}
 	})
 
-	// Scenario 2: Multi-service isolation (Alice cannot access Factory) -> 403 Forbidden
 	t.Run("multi_service_isolation_denied", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/svc/factory/dashboard", nil)
 		req.Header.Set("X-WebGate-Session", "sess_alice")
@@ -100,18 +87,15 @@ func TestAdversarialE2EQualification(t *testing.T) {
 		}
 	})
 
-	// Scenario 3: Missing or forged authentication headers -> 401 Unauthorized
 	t.Run("unauthenticated_requests", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/svc/docs/index", nil)
 		rec := httptest.NewRecorder()
-
 		gw.ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("expected 401, got %d", rec.Code)
 		}
 	})
 
-	// Scenario 4: Instant Service Disable -> 503 Service Unavailable
 	t.Run("instant_service_disable", func(t *testing.T) {
 		_ = svcReg.UpdateStatus("svc_docs", domain.ServiceStatusDisabled)
 
@@ -124,12 +108,9 @@ func TestAdversarialE2EQualification(t *testing.T) {
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("expected 503 for disabled service, got %d", rec.Code)
 		}
-
-		// Re-enable
 		_ = svcReg.UpdateStatus("svc_docs", domain.ServiceStatusActive)
 	})
 
-	// Scenario 5: High-concurrency race condition testing
 	t.Run("concurrent_adversarial_requests", func(t *testing.T) {
 		var wg sync.WaitGroup
 		concurrency := 20

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Homiakus/WebGate/server/pkg/admin"
@@ -22,11 +23,9 @@ func TestAdminAPIFlow(t *testing.T) {
 	authorizer := auth.NewSecureAccessAuthorizer()
 
 	api := admin.NewAdminAPI(svcReg, devReg, relReg, delSvc, authorizer)
-
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)
 
-	// 1. Health check
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	mux.ServeHTTP(rec, req)
@@ -34,7 +33,6 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("healthcheck failed with code %d", rec.Code)
 	}
 
-	// 2. Create Service
 	svcPayload := domain.ProtectedService{
 		ID:          "svc_factory",
 		WorkspaceID: "ws_factory",
@@ -51,7 +49,6 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("create service failed with code %d, body: %s", rec.Code, rec.Body.String())
 	}
 
-	// 3. List Services
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/admin/services", nil)
 	mux.ServeHTTP(rec, req)
@@ -59,7 +56,6 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("list services failed with code %d", rec.Code)
 	}
 
-	// 4. Test Audit log has events
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/admin/audit", nil)
 	mux.ServeHTTP(rec, req)
@@ -67,7 +63,6 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("audit check failed with code %d", rec.Code)
 	}
 
-	// 5. Test Dashboard HTML
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/admin", nil)
 	mux.ServeHTTP(rec, req)
@@ -75,7 +70,6 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("dashboard UI test failed")
 	}
 
-	// 6. Test Get Config
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/admin/config", nil)
 	mux.ServeHTTP(rec, req)
@@ -83,7 +77,6 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("get config failed with code %d", rec.Code)
 	}
 
-	// 7. Test Update Service Route
 	routePayload := map[string]string{
 		"service_id":   "svc_factory",
 		"upstream_url": "http://127.0.0.1:9099",
@@ -96,7 +89,6 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("update route failed with code %d, body: %s", rec.Code, rec.Body.String())
 	}
 
-	// 8. Test Update Full Service
 	fullPayload := map[string]interface{}{
 		"id":              "svc_factory",
 		"name":            "Factory OS Pro",
@@ -113,10 +105,9 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("update full service failed with code %d", rec.Code)
 	}
 
-	// 9. Test Update Config
 	cfgPayload := map[string]interface{}{
-		"server_name":            "Updated WebGate Gateway",
-		"listen_addr":            ":8788",
+		"server_name":           "Updated WebGate Gateway",
+		"listen_addr":           ":8788",
 		"proxy_timeout_seconds": 25,
 	}
 	cbody, _ := json.Marshal(cfgPayload)
@@ -127,14 +118,13 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("update config failed with code %d", rec.Code)
 	}
 
-	// 10. Test Enroll & Update Device
 	devPayload := domain.Device{
 		ID:           "dev_test_1",
 		UserID:       "usr_test",
 		Label:        "Test Workstation",
 		Platform:     domain.PlatformWindows,
 		Architecture: domain.ArchX86_64,
-		PublicKeyHex: "1234567890abcdef",
+		PublicKeyHex: strings.Repeat("00", 32),
 		Algorithm:    "Ed25519",
 	}
 	dbody, _ := json.Marshal(devPayload)
@@ -142,12 +132,12 @@ func TestAdminAPIFlow(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/api/admin/devices/enroll", bytes.NewReader(dbody))
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("enroll device failed with code %d", rec.Code)
+		t.Fatalf("enroll device failed with code %d, body: %s", rec.Code, rec.Body.String())
 	}
 
 	statusPayload := map[string]string{
 		"device_id": "dev_test_1",
-		"status":    "ACTIVE",
+		"status":    "SUSPENDED",
 	}
 	sbody, _ := json.Marshal(statusPayload)
 	rec = httptest.NewRecorder()
@@ -157,7 +147,6 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("update device status failed with code %d", rec.Code)
 	}
 
-	// 11. Test Delete Service
 	delPayload := map[string]string{"service_id": "svc_factory"}
 	dlbody, _ := json.Marshal(delPayload)
 	rec = httptest.NewRecorder()
@@ -167,4 +156,3 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("delete service failed with code %d", rec.Code)
 	}
 }
-

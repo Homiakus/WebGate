@@ -55,7 +55,6 @@ func NewServerGateway(
 
 // ServeHTTP handles incoming proxied requests with strict authentication and SSRF filtering.
 func (g *ServerGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// 1. Extract session & device headers
 	sessionID := r.Header.Get("X-WebGate-Session")
 	deviceID := r.Header.Get("X-WebGate-Device")
 
@@ -64,14 +63,12 @@ func (g *ServerGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Lookup device status
 	dev, err := g.devices.GetDevice(deviceID)
 	if err != nil || !dev.Status.IsAllowedAccess() {
 		http.Error(w, "device unauthorized or revoked", http.StatusForbidden)
 		return
 	}
 
-	// 3. Resolve target service from path `/svc/{slug}/...`
 	slug, subpath := extractSlugAndSubpath(r.URL.Path)
 	if slug == "" {
 		http.Error(w, "invalid service path format; expected /svc/{slug}/...", http.StatusBadRequest)
@@ -89,22 +86,19 @@ func (g *ServerGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Evaluate SecureAcces authorization
 	reqPerm := mapMethodToPermission(r.Method)
-	_, err = g.authorizer.AuthorizeServiceAccess(sessionID, dev.Status, svc, reqPerm)
+	_, err = g.authorizer.AuthorizeServiceAccess(sessionID, dev, svc, reqPerm)
 	if err != nil {
 		http.Error(w, "access denied by security policy", http.StatusForbidden)
 		return
 	}
 
-	// 5. Build safe upstream URL (SSRF protected)
 	targetURL, err := buildSafeUpstreamURL(svc.UpstreamURL, subpath, r.URL.RawQuery)
 	if err != nil {
 		http.Error(w, "invalid upstream destination", http.StatusBadGateway)
 		return
 	}
 
-	// 6. Proxy request
 	ctx, cancel := context.WithTimeout(r.Context(), g.config.ProxyTimeout)
 	defer cancel()
 
@@ -114,10 +108,9 @@ func (g *ServerGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Copy allowed headers
 	for k, vv := range r.Header {
 		if strings.HasPrefix(strings.ToLower(k), "x-webgate-") {
-			continue // Strip internal broker headers before upstream
+			continue
 		}
 		for _, v := range vv {
 			proxyReq.Header.Add(k, v)
@@ -131,7 +124,6 @@ func (g *ServerGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Copy response headers
 	for k, vv := range resp.Header {
 		for _, v := range vv {
 			w.Header().Add(k, v)
@@ -176,7 +168,6 @@ func buildSafeUpstreamURL(baseUpstream, subpath, query string) (string, error) {
 		return "", err
 	}
 
-	// Reject external non-http schemes
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return "", ErrSSRFAttemptBlocked
 	}

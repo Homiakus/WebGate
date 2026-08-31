@@ -13,7 +13,6 @@ import (
 )
 
 func TestServerGatewayE2E(t *testing.T) {
-	// 1. Mock upstream server
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/docs/page1" {
 			http.NotFound(w, r)
@@ -24,7 +23,6 @@ func TestServerGatewayE2E(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	// 2. Setup registries & auth
 	svcReg := registry.NewServiceRegistry()
 	_ = svcReg.Register(&domain.ProtectedService{
 		ID:          "svc_docs",
@@ -35,15 +33,7 @@ func TestServerGatewayE2E(t *testing.T) {
 	})
 
 	devReg := registry.NewDeviceRegistry()
-	_ = devReg.Enroll(&domain.Device{
-		ID:           "dev_123",
-		UserID:       "user_alice",
-		Status:       domain.DeviceStatusActive,
-		PublicKeyHex: "abcd",
-	})
-	// Activate device
-	chal, _ := devReg.CreateChallenge("dev_123", time.Minute)
-	_ = devReg.VerifyAndActivate(chal.ChallengeID, "signature_ok")
+	enrollAndActivateTestDevice(t, devReg, "dev_123", "user_alice")
 
 	authorizer := auth.NewSecureAccessAuthorizer()
 	authorizer.RegisterSession(&auth.UserSession{
@@ -54,17 +44,14 @@ func TestServerGatewayE2E(t *testing.T) {
 	})
 	authorizer.SetMembership("user_alice", "ws_docs", domain.PermView)
 
-	// 3. Create Gateway
 	gw := gateway.NewServerGateway(svcReg, devReg, authorizer, gateway.GatewayConfig{
 		ProxyTimeout: 5 * time.Second,
 	})
 
-	// 4. Test Authorized Request -> 200 OK
 	req := httptest.NewRequest(http.MethodGet, "/svc/docs/docs/page1", nil)
 	req.Header.Set("X-WebGate-Session", "sess_xyz")
 	req.Header.Set("X-WebGate-Device", "dev_123")
 	rec := httptest.NewRecorder()
-
 	gw.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -74,18 +61,25 @@ func TestServerGatewayE2E(t *testing.T) {
 		t.Fatalf("unexpected body: %s", rec.Body.String())
 	}
 
-	// 5. Test Unauthorized / Missing Permission -> 403 Forbidden
 	reqDenied := httptest.NewRequest(http.MethodDelete, "/svc/docs/docs/page1", nil)
 	reqDenied.Header.Set("X-WebGate-Session", "sess_xyz")
 	reqDenied.Header.Set("X-WebGate-Device", "dev_123")
 	recDenied := httptest.NewRecorder()
-
 	gw.ServeHTTP(recDenied, reqDenied)
 	if recDenied.Code != http.StatusForbidden {
 		t.Fatalf("expected status 403 for DELETE without PermDelete, got %d", recDenied.Code)
 	}
 
-	// 6. Test Revoked Device -> 403 Forbidden
+	enrollAndActivateTestDevice(t, devReg, "dev_other", "user_alice")
+	reqReplay := httptest.NewRequest(http.MethodGet, "/svc/docs/docs/page1", nil)
+	reqReplay.Header.Set("X-WebGate-Session", "sess_xyz")
+	reqReplay.Header.Set("X-WebGate-Device", "dev_other")
+	recReplay := httptest.NewRecorder()
+	gw.ServeHTTP(recReplay, reqReplay)
+	if recReplay.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403 for session/device mismatch, got %d", recReplay.Code)
+	}
+
 	_ = devReg.RevokeDevice("dev_123")
 	recRevoked := httptest.NewRecorder()
 	gw.ServeHTTP(recRevoked, req)
@@ -95,7 +89,6 @@ func TestServerGatewayE2E(t *testing.T) {
 }
 
 func TestServerGatewayRenderingModelsE2E(t *testing.T) {
-	// Mock SPA, CSR, and SSR endpoints on upstream
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/spa/index.html":
@@ -126,14 +119,7 @@ func TestServerGatewayRenderingModelsE2E(t *testing.T) {
 	})
 
 	devReg := registry.NewDeviceRegistry()
-	_ = devReg.Enroll(&domain.Device{
-		ID:           "dev_prod",
-		UserID:       "user_bob",
-		Status:       domain.DeviceStatusActive,
-		PublicKeyHex: "beef1234",
-	})
-	chal, _ := devReg.CreateChallenge("dev_prod", time.Minute)
-	_ = devReg.VerifyAndActivate(chal.ChallengeID, "sig_ok")
+	enrollAndActivateTestDevice(t, devReg, "dev_prod", "user_bob")
 
 	authorizer := auth.NewSecureAccessAuthorizer()
 	authorizer.RegisterSession(&auth.UserSession{
@@ -148,7 +134,6 @@ func TestServerGatewayRenderingModelsE2E(t *testing.T) {
 		ProxyTimeout: 5 * time.Second,
 	})
 
-	// 1. SPA shell loading
 	reqSpa := httptest.NewRequest(http.MethodGet, "/svc/factory/spa/index.html", nil)
 	reqSpa.Header.Set("X-WebGate-Session", "sess_bob")
 	reqSpa.Header.Set("X-WebGate-Device", "dev_prod")
@@ -158,7 +143,6 @@ func TestServerGatewayRenderingModelsE2E(t *testing.T) {
 		t.Fatalf("failed SPA request: code %d, body: %s", recSpa.Code, recSpa.Body.String())
 	}
 
-	// 2. CSR API JSON data fetch
 	reqCsr := httptest.NewRequest(http.MethodGet, "/svc/factory/csr/api/v1/metrics", nil)
 	reqCsr.Header.Set("X-WebGate-Session", "sess_bob")
 	reqCsr.Header.Set("X-WebGate-Device", "dev_prod")
@@ -168,7 +152,6 @@ func TestServerGatewayRenderingModelsE2E(t *testing.T) {
 		t.Fatalf("failed CSR request: code %d, body: %s", recCsr.Code, recCsr.Body.String())
 	}
 
-	// 3. SSR pre-rendered document
 	reqSsr := httptest.NewRequest(http.MethodGet, "/svc/factory/ssr/report", nil)
 	reqSsr.Header.Set("X-WebGate-Session", "sess_bob")
 	reqSsr.Header.Set("X-WebGate-Device", "dev_prod")

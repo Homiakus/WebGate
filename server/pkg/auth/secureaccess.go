@@ -9,9 +9,11 @@ import (
 )
 
 var (
-	ErrSessionExpired       = errors.New("user session expired")
-	ErrDeviceRevokedOrInactive = errors.New("device is not active or has been revoked")
-	ErrAccessDenied         = errors.New("insufficient workspace permissions for service")
+	ErrSessionExpired            = errors.New("user session expired")
+	ErrDeviceRevokedOrInactive   = errors.New("device is not active or has been revoked")
+	ErrSessionDeviceMismatch     = errors.New("session is not bound to the presented device")
+	ErrSessionUserDeviceMismatch = errors.New("session user does not own the presented device")
+	ErrAccessDenied              = errors.New("insufficient workspace permissions for service")
 )
 
 type UserSession struct {
@@ -60,14 +62,15 @@ func (a *SecureAccessAuthorizer) SetMembership(userID, workspaceID string, perms
 	a.memberships[key] = perms
 }
 
-// AuthorizeServiceAccess validates session, device status, and workspace permission for a service action.
+// AuthorizeServiceAccess validates session, presented device identity/status,
+// user-to-device ownership, and workspace permission for a service action.
 func (a *SecureAccessAuthorizer) AuthorizeServiceAccess(
 	sessionID string,
-	deviceStatus domain.DeviceStatus,
+	device *domain.Device,
 	service *domain.ProtectedService,
 	requiredPerm domain.PermissionBits,
 ) (*UserSession, error) {
-	if !deviceStatus.IsAllowedAccess() {
+	if device == nil || !device.Status.IsAllowedAccess() {
 		return nil, ErrDeviceRevokedOrInactive
 	}
 
@@ -77,6 +80,12 @@ func (a *SecureAccessAuthorizer) AuthorizeServiceAccess(
 	sess, ok := a.sessions[sessionID]
 	if !ok || time.Now().UTC().After(sess.ExpiresAt) {
 		return nil, ErrSessionExpired
+	}
+	if sess.DeviceID == "" || sess.DeviceID != device.ID {
+		return nil, ErrSessionDeviceMismatch
+	}
+	if sess.UserID == "" || sess.UserID != device.UserID {
+		return nil, ErrSessionUserDeviceMismatch
 	}
 
 	key := sess.UserID + ":" + service.WorkspaceID

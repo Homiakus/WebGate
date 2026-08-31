@@ -45,10 +45,12 @@ type Device struct {
 	LastSeenAt   time.Time          `json:"last_seen_at"`
 }
 
-// DeviceChallenge is an ephemeral challenge issued by the server for PoP.
+// DeviceChallenge is an ephemeral, single-use proof-of-possession challenge.
+// SigningPayload is the exact byte string (UTF-8) a client must sign.
 type DeviceChallenge struct {
-	ChallengeID string    `json:"challenge_id"`
-	DeviceID    string    `json:"device_id"`
-	NonceHex    string    `json:"nonce_hex"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	ChallengeID    string    `json:"challenge_id"`
+	DeviceID       string    `json:"device_id"`
+	NonceHex       string    `json:"nonce_hex"`
+	SigningPayload string    `json:"signing_payload"`
+	ExpiresAt      time.Time `json:"expires_at"`
 }

@@ -1,6 +1,10 @@
 package registry_test
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,11 +14,16 @@ import (
 
 func TestDeviceRegistryLifecycle(t *testing.T) {
 	devReg := registry.NewDeviceRegistry()
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
 
 	dev := &domain.Device{
 		ID:           "dev_laptop",
 		UserID:       "user_dave",
-		PublicKeyHex: "beef1234",
+		PublicKeyHex: hex.EncodeToString(publicKey),
+		Algorithm:    "Ed25519",
 		Platform:     domain.PlatformWindows,
 		Architecture: domain.ArchX86_64,
 	}
@@ -27,15 +36,21 @@ func TestDeviceRegistryLifecycle(t *testing.T) {
 	if enrolled.Status != domain.DeviceStatusPending {
 		t.Fatalf("enrolled device should be PENDING, got %s", enrolled.Status)
 	}
+	if err := devReg.UpdateStatus(dev.ID, domain.DeviceStatusActive); !errors.Is(err, registry.ErrActivationRequiresProof) {
+		t.Fatalf("expected direct activation to be rejected, got %v", err)
+	}
 
-	// Create challenge
 	chal, err := devReg.CreateChallenge("dev_laptop", time.Minute)
 	if err != nil {
 		t.Fatalf("failed to create challenge: %v", err)
 	}
+	payload, err := registry.ChallengeSigningPayload(chal, dev)
+	if err != nil {
+		t.Fatalf("failed to build signing payload: %v", err)
+	}
+	signature := ed25519.Sign(privateKey, payload)
 
-	// Verify and activate
-	if err := devReg.VerifyAndActivate(chal.ChallengeID, "signed_proof"); err != nil {
+	if err := devReg.VerifyAndActivate(chal.ChallengeID, hex.EncodeToString(signature)); err != nil {
 		t.Fatalf("failed to activate device: %v", err)
 	}
 
@@ -44,13 +59,43 @@ func TestDeviceRegistryLifecycle(t *testing.T) {
 		t.Fatalf("activated device should be ACTIVE, got %s", activeDev.Status)
 	}
 
-	// Revoke
+	if err := devReg.VerifyAndActivate(chal.ChallengeID, hex.EncodeToString(signature)); !errors.Is(err, registry.ErrChallengeExpired) {
+		t.Fatalf("expected challenge replay to fail, got %v", err)
+	}
+
 	if err := devReg.RevokeDevice("dev_laptop"); err != nil {
 		t.Fatalf("failed to revoke device: %v", err)
 	}
 	revokedDev, _ := devReg.GetDevice("dev_laptop")
 	if revokedDev.Status != domain.DeviceStatusRevoked {
 		t.Fatalf("revoked device should be REVOKED, got %s", revokedDev.Status)
+	}
+}
+
+func TestDeviceRegistryRejectsForgedSignature(t *testing.T) {
+	devReg := registry.NewDeviceRegistry()
+	publicKey, _, _ := ed25519.GenerateKey(rand.Reader)
+	_, attackerKey, _ := ed25519.GenerateKey(rand.Reader)
+	dev := &domain.Device{
+		ID:           "dev_secure",
+		UserID:       "user_secure",
+		PublicKeyHex: hex.EncodeToString(publicKey),
+		Algorithm:    "Ed25519",
+	}
+	if err := devReg.Enroll(dev); err != nil {
+		t.Fatal(err)
+	}
+	chal, err := devReg.CreateChallenge(dev.ID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := registry.ChallengeSigningPayload(chal, dev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := ed25519.Sign(attackerKey, payload)
+	if err := devReg.VerifyAndActivate(chal.ChallengeID, hex.EncodeToString(forged)); !errors.Is(err, registry.ErrInvalidSignature) {
+		t.Fatalf("expected forged signature rejection, got %v", err)
 	}
 }
 
@@ -75,13 +120,11 @@ func TestReleaseRegistryLifecycle(t *testing.T) {
 		t.Fatalf("failed to add draft: %v", err)
 	}
 
-	// Cannot get promoted yet
 	_, _, err := relReg.GetLatestPromoted(domain.PlatformAndroid, domain.ArchArm64)
 	if err != registry.ErrArtifactNotFound {
 		t.Fatalf("draft release should not be returned as promoted")
 	}
 
-	// Verify then Promote
 	if err := relReg.Verify("v2.0.0"); err != nil {
 		t.Fatalf("failed to verify release: %v", err)
 	}
@@ -94,7 +137,6 @@ func TestReleaseRegistryLifecycle(t *testing.T) {
 		t.Fatalf("unexpected promoted release: %v, %v, %v", promoted, art, err)
 	}
 
-	// Revoke
 	if err := relReg.Revoke("v2.0.0"); err != nil {
 		t.Fatalf("failed to revoke release: %v", err)
 	}

@@ -48,14 +48,12 @@ func NewProcessManager(services *registry.ServiceRegistry) *ProcessManager {
 	}
 }
 
-// SetOnExitHook registers a listener triggered whenever a child process exits or crashes.
 func (pm *ProcessManager) SetOnExitHook(hook func(serviceID string, pid int, exitCode int, err error)) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.onExitHook = hook
 }
 
-// AppendLog appends a message line to the ring buffer for a service.
 func (pm *ProcessManager) AppendLog(serviceID string, line string) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -70,7 +68,6 @@ func (pm *ProcessManager) appendLogLocked(serviceID string, line string) {
 	}
 }
 
-// GetRecentLogs returns recent log entries for a service.
 func (pm *ProcessManager) GetRecentLogs(serviceID string, limit int) []string {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
@@ -84,7 +81,6 @@ func (pm *ProcessManager) GetRecentLogs(serviceID string, limit int) []string {
 	return lines
 }
 
-// StartService starts the child process for the service.
 func (pm *ProcessManager) StartService(serviceID string) (*ProcessInstance, error) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -93,11 +89,9 @@ func (pm *ProcessManager) StartService(serviceID string) (*ProcessInstance, erro
 	if err != nil {
 		return nil, fmt.Errorf("service not found: %w", err)
 	}
-
 	if strings.TrimSpace(svc.ExecutablePath) == "" {
 		return nil, ErrNoExecutableDefined
 	}
-
 	if existing, running := pm.processes[serviceID]; running && existing.State == string(domain.ProcessStateRunning) {
 		return nil, ErrServiceAlreadyRunning
 	}
@@ -115,24 +109,14 @@ func (pm *ProcessManager) StartService(serviceID string) (*ProcessInstance, erro
 			cmd.Dir = svc.WorkingDir
 		}
 		if err := cmd.Start(); err != nil {
-			pm.mockPIDSeq++
-			pid = pm.mockPIDSeq
-		} else {
-			pid = cmd.Process.Pid
-			go func(sID string, pID int, c *exec.Cmd) {
-				waitErr := c.Wait()
-				exitCode := 0
-				if waitErr != nil {
-					exitCode = 1
-				}
-				pm.mu.RLock()
-				hook := pm.onExitHook
-				pm.mu.RUnlock()
-				if hook != nil {
-					hook(sID, pID, exitCode, waitErr)
-				}
-			}(serviceID, pid, cmd)
+			svc.ProcessState = domain.ProcessStateStopped
+			svc.ProcessPID = 0
+			svc.StartedAt = nil
+			svc.UpdatedAt = now
+			pm.appendLogLocked(serviceID, "Ошибка запуска процесса: "+err.Error())
+			return nil, fmt.Errorf("failed to start service process: %w", err)
 		}
+		pid = cmd.Process.Pid
 	}
 
 	inst := &ProcessInstance{
@@ -157,10 +141,43 @@ func (pm *ProcessManager) StartService(serviceID string) (*ProcessInstance, erro
 	}
 	svc.UpdatedAt = now
 
+	if cmd != nil {
+		go pm.waitForProcess(serviceID, pid, cmd)
+	}
+
 	return inst, nil
 }
 
-// StopService gracefully stops the running child process.
+func (pm *ProcessManager) waitForProcess(serviceID string, pid int, cmd *exec.Cmd) {
+	waitErr := cmd.Wait()
+	exitCode := 0
+	if waitErr != nil {
+		exitCode = 1
+	}
+
+	pm.mu.Lock()
+	if inst, ok := pm.processes[serviceID]; ok && inst.PID == pid && inst.State == string(domain.ProcessStateRunning) {
+		state := domain.ProcessStateStopped
+		if waitErr != nil {
+			state = domain.ProcessStateCrashed
+		}
+		inst.State = string(state)
+		inst.PID = 0
+		if svc, err := pm.services.GetByID(serviceID); err == nil {
+			svc.ProcessState = state
+			svc.ProcessPID = 0
+			svc.UpdatedAt = time.Now().UTC()
+		}
+		pm.appendLogLocked(serviceID, fmt.Sprintf("Процесс завершился (PID %d, exit=%d)", pid, exitCode))
+	}
+	hook := pm.onExitHook
+	pm.mu.Unlock()
+
+	if hook != nil {
+		hook(serviceID, pid, exitCode, waitErr)
+	}
+}
+
 func (pm *ProcessManager) StopService(serviceID string) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -188,13 +205,11 @@ func (pm *ProcessManager) StopService(serviceID string) error {
 	return nil
 }
 
-// RestartService restarts a given service.
 func (pm *ProcessManager) RestartService(serviceID string) (*ProcessInstance, error) {
 	_ = pm.StopService(serviceID)
 	return pm.StartService(serviceID)
 }
 
-// GetProcess returns active process info.
 func (pm *ProcessManager) GetProcess(serviceID string) (*ProcessInstance, bool) {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
@@ -202,7 +217,6 @@ func (pm *ProcessManager) GetProcess(serviceID string) (*ProcessInstance, bool) 
 	return inst, exists
 }
 
-// ListAll returns a snapshot map of all tracked processes.
 func (pm *ProcessManager) ListAll() map[string]*ProcessInstance {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
