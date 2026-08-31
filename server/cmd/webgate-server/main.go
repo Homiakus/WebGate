@@ -3,10 +3,12 @@ package main
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Homiakus/WebGate/server/pkg/admin"
@@ -17,6 +19,8 @@ import (
 	"github.com/Homiakus/WebGate/server/pkg/gateway"
 	"github.com/Homiakus/WebGate/server/pkg/registry"
 )
+
+const defaultAuthorityEndpoint = "http://127.0.0.1:8790"
 
 func main() {
 	configPath := flag.String("config", "", "Path to server configuration file (.toml / .json)")
@@ -61,14 +65,18 @@ func main() {
 	adminAPI.SetConfig(serverCfg)
 	adminAPI.LogAudit(domain.AuditActionServiceCreated, "system", "config", "Bound server config: "+serverCfg.ServerName)
 
-	// No authoritative SecureAcces provider is shipped by this public repository
-	// yet. Failing closed here is intentional: T-052 supplies the private,
-	// durable production provider without publishing SecureAcces source.
-	serviceAuthorizer := auth.NewUnavailableServiceAuthorizer()
+	serviceAuthorizer, authorityEndpoint, err := serviceAuthorizerFromEnvironment()
+	if err != nil {
+		log.Fatalf("[Безопасность] Некорректная конфигурация SecureAcces authority: %v", err)
+	}
+	if authorityEndpoint == "" {
+		log.Printf("[Безопасность] SecureAcces provider не настроен: /svc/* работает fail-closed (503)")
+	} else {
+		log.Printf("[Безопасность] SecureAcces authority подключён через %s", authorityEndpoint)
+	}
 	gw := gateway.NewServerGateway(svcReg, devReg, serviceAuthorizer, gateway.GatewayConfig{
 		ProxyTimeout: time.Duration(serverCfg.ProxyTimeoutSecs) * time.Second,
 	})
-	log.Printf("[Безопасность] SecureAcces provider не настроен: /svc/* будет fail-closed (503) до T-052")
 
 	dataMux := http.NewServeMux()
 	dataMux.Handle("/svc/", gw)
@@ -110,6 +118,30 @@ func main() {
 	if serveErr := <-errCh; serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 		log.Fatalf("WebGate server error: %v", serveErr)
 	}
+}
+
+func serviceAuthorizerFromEnvironment() (auth.ServiceAuthorizer, string, error) {
+	endpoint := strings.TrimSpace(os.Getenv("WEBGATE_AUTHORITY_URL"))
+	bridgeToken := os.Getenv("WEBGATE_AUTHORITY_TOKEN")
+
+	if endpoint == "" && bridgeToken == "" {
+		return auth.NewUnavailableServiceAuthorizer(), "", nil
+	}
+	if bridgeToken == "" {
+		return nil, "", fmt.Errorf("WEBGATE_AUTHORITY_TOKEN is required when authority is explicitly configured")
+	}
+	if endpoint == "" {
+		endpoint = defaultAuthorityEndpoint
+	}
+	authorizer, err := auth.NewRemoteServiceAuthorizer(auth.RemoteServiceAuthorizerConfig{
+		Endpoint:    endpoint,
+		BridgeToken: bridgeToken,
+		Timeout:     2 * time.Second,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return authorizer, endpoint, nil
 }
 
 func hardenedHTTPServer(handler http.Handler) *http.Server {
