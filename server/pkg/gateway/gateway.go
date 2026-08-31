@@ -42,12 +42,19 @@ func NewServerGateway(
 		config.ProxyTimeout = 15 * time.Second
 	}
 
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+
 	return &ServerGateway{
 		services:   services,
 		devices:    devices,
 		authorizer: authorizer,
 		httpClient: &http.Client{
-			Timeout: config.ProxyTimeout,
+			Timeout:   config.ProxyTimeout,
+			Transport: transport,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		config: config,
 	}
@@ -124,6 +131,11 @@ func (g *ServerGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	if err := rewriteSafeRedirectLocation(resp, svc.UpstreamURL, slug); err != nil {
+		http.Error(w, "unsafe upstream redirect", http.StatusBadGateway)
+		return
+	}
+
 	for k, vv := range resp.Header {
 		for _, v := range vv {
 			w.Header().Add(k, v)
@@ -163,13 +175,14 @@ func mapMethodToPermission(method string) domain.PermissionBits {
 }
 
 func buildSafeUpstreamURL(baseUpstream, subpath, query string) (string, error) {
-	u, err := url.Parse(baseUpstream)
+	canonicalUpstream, err := domain.CanonicalizeUpstreamURL(baseUpstream)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", ErrSSRFAttemptBlocked, err)
 	}
 
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", ErrSSRFAttemptBlocked
+	u, err := url.Parse(canonicalUpstream)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrSSRFAttemptBlocked, err)
 	}
 
 	u.Path = strings.TrimSuffix(u.Path, "/") + subpath
@@ -177,4 +190,47 @@ func buildSafeUpstreamURL(baseUpstream, subpath, query string) (string, error) {
 		u.RawQuery = query
 	}
 	return u.String(), nil
+}
+
+// rewriteSafeRedirectLocation keeps browser-visible redirects inside the WebGate
+// service namespace. Same-origin upstream redirects are rewritten back through
+// /svc/{slug}; cross-origin, public, DNS, and private-LAN redirect targets fail closed.
+func rewriteSafeRedirectLocation(resp *http.Response, baseUpstream, slug string) error {
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return nil
+	}
+
+	redirectURL, err := resp.Location()
+	if err != nil {
+		return fmt.Errorf("%w: invalid redirect location", ErrSSRFAttemptBlocked)
+	}
+	baseURL, err := url.Parse(baseUpstream)
+	if err != nil {
+		return fmt.Errorf("%w: invalid base upstream", ErrSSRFAttemptBlocked)
+	}
+
+	redirectOrigin := (&url.URL{Scheme: redirectURL.Scheme, Host: redirectURL.Host}).String()
+	canonicalRedirectOrigin, err := domain.CanonicalizeUpstreamURL(redirectOrigin)
+	if err != nil {
+		return fmt.Errorf("%w: redirect destination rejected", ErrSSRFAttemptBlocked)
+	}
+	canonicalBaseOrigin, err := domain.CanonicalizeUpstreamURL((&url.URL{Scheme: baseURL.Scheme, Host: baseURL.Host}).String())
+	if err != nil || canonicalRedirectOrigin != canonicalBaseOrigin {
+		return fmt.Errorf("%w: cross-origin redirect rejected", ErrSSRFAttemptBlocked)
+	}
+
+	redirectPath := redirectURL.Path
+	if redirectPath == "" {
+		redirectPath = "/"
+	} else if !strings.HasPrefix(redirectPath, "/") {
+		redirectPath = "/" + redirectPath
+	}
+	rewritten := &url.URL{
+		Path:     "/svc/" + slug + redirectPath,
+		RawQuery: redirectURL.RawQuery,
+		Fragment: redirectURL.Fragment,
+	}
+	resp.Header.Set("Location", rewritten.String())
+	return nil
 }
