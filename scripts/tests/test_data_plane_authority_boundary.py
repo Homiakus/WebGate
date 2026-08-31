@@ -16,7 +16,10 @@ class DataPlaneAuthorityBoundaryTests(unittest.TestCase):
     def test_production_data_plane_does_not_construct_surrogate_authority(self):
         source = (SERVER / "cmd" / "webgate-server" / "main.go").read_text(encoding="utf-8")
         self.assertNotIn("authorizer := auth.NewSecureAccessAuthorizer()", source)
-        self.assertIn("serviceAuthorizer := auth.NewUnavailableServiceAuthorizer()", source)
+        self.assertIn("serviceAuthorizerFromEnvironment()", source)
+        self.assertIn("auth.NewUnavailableServiceAuthorizer()", source)
+        self.assertIn("auth.NewRemoteServiceAuthorizer", source)
+        self.assertIn("WEBGATE_AUTHORITY_TOKEN", source)
         self.assertIn("gateway.NewServerGateway(svcReg, devReg, serviceAuthorizer", source)
 
     def test_fail_closed_authority_spi_exists(self):

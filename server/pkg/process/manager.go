@@ -3,6 +3,7 @@ package process
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -105,6 +106,7 @@ func (pm *ProcessManager) StartService(serviceID string) (*ProcessInstance, erro
 		pid = pm.mockPIDSeq
 	} else {
 		cmd = exec.Command(svc.ExecutablePath, svc.ExecArgs...)
+		cmd.Env = sanitizedChildEnvironment(os.Environ())
 		if svc.WorkingDir != "" {
 			cmd.Dir = svc.WorkingDir
 		}
@@ -146,6 +148,26 @@ func (pm *ProcessManager) StartService(serviceID string) (*ProcessInstance, erro
 	}
 
 	return inst, nil
+}
+
+func sanitizedChildEnvironment(parent []string) []string {
+	filtered := make([]string, 0, len(parent))
+	for _, entry := range parent {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if isWebGateControlSecret(key) {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
+func isWebGateControlSecret(key string) bool {
+	return strings.EqualFold(key, "WEBGATE_AUTHORITY_TOKEN") ||
+		strings.EqualFold(key, "WEBGATE_ADMIN_TOKEN")
 }
 
 func (pm *ProcessManager) waitForProcess(serviceID string, pid int, cmd *exec.Cmd) {

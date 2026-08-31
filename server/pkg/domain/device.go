@@ -32,9 +32,14 @@ const (
 )
 
 // Device represents an enrolled or enrolling client workstation or mobile device.
+// AccountID is the authoritative global SecureAcces account binding used by the
+// production authorization path. UserID is retained temporarily as legacy
+// tenant-local metadata for unrequalified admin/tests and MUST NOT be promoted
+// to AccountID implicitly.
 type Device struct {
 	ID           string             `json:"id"`
-	UserID       string             `json:"user_id"`
+	AccountID    string             `json:"account_id,omitempty"`
+	UserID       string             `json:"user_id,omitempty"`
 	PublicKeyHex string             `json:"public_key_hex"`
 	Algorithm    string             `json:"algorithm"`
 	Platform     DevicePlatform     `json:"platform"`
