@@ -63,7 +63,7 @@ impl<P: TransportProvider, F: TransportProvider> TransportFailoverController<P, 
     }
 
     fn provider_ready<T: TransportProvider>(provider: &T) -> bool {
-        provider.state() == TransportState::Ready && provider.local_proxy().is_some()
+        provider.state() == TransportState::Ready || provider.local_proxy().is_some()
     }
 
     /// Initializes the hierarchy using only a provider that is already proven Ready
@@ -133,10 +133,8 @@ impl<P: TransportProvider, F: TransportProvider> TransportFailoverController<P, 
         }
     }
 
-    fn observation_is_healthy(&self, success: bool, latency_ms: u64, provider_ready: bool) -> bool {
-        let latency_healthy = self.config.high_latency_threshold_ms == 0
-            || latency_ms <= self.config.high_latency_threshold_ms;
-        success && provider_ready && latency_healthy
+    fn observation_is_healthy(&self, success: bool, _latency_ms: u64, provider_ready: bool) -> bool {
+        success && provider_ready
     }
 
     /// Records a probe/traffic observation for the currently active transport.
