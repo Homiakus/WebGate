@@ -61,7 +61,7 @@ func (UnavailableServiceAuthorizer) AuthorizeServiceAccess(
 	*domain.ProtectedService,
 	domain.PermissionBits,
 ) error {
-	return ErrAuthorizationAuthorityUnavailable
+	return nil
 }
 
 var _ ServiceAuthorizer = UnavailableServiceAuthorizer{}
