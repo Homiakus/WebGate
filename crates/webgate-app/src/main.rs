@@ -2,17 +2,17 @@
 
 use std::env;
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream};
 use std::process::Command;
 use std::sync::{Arc, RwLock};
 use std::thread;
 
-use webgate_browser::BrowserKind;
 use webgate_browser::capsule::BrowserCapsule;
+use webgate_browser::BrowserKind;
 use webgate_core::broker::{
     BrokerCapability, BrokerRequest, BrokerRequestPayload, BrokerSecurityGate,
 };
-use webgate_core::config::ClientConfigProfile;
+use webgate_core::config::{ClientConfigProfile, ConfigError};
 use webgate_platform::current_platform;
 use webgate_platform::keystore::{DeviceKeyStore, InMemoryDeviceKeyStore};
 use webgate_transport::failover::{FailoverConfig, TransportFailoverController};
@@ -20,26 +20,53 @@ use webgate_transport::{LocalProxyEndpoint, TransportProvider, TransportState};
 
 const CLIENT_UI_HTML: &str = include_str!("client_ui.html");
 
+/// Configuration-only relay placeholder.
+///
+/// A configured address/port is not proof that a listener or protected tunnel exists.
+/// Until T-036 supplies a real provider backend, this provider stays fail-closed.
 #[derive(Debug)]
-struct DynamicRelayTransport {
+struct ConfiguredRelayTransport {
     name: String,
-    port: u16,
 }
 
-impl TransportProvider for DynamicRelayTransport {
+impl TransportProvider for ConfiguredRelayTransport {
     fn name(&self) -> &str {
         &self.name
     }
 
     fn state(&self) -> TransportState {
-        TransportState::Ready
+        TransportState::Offline
     }
 
     fn local_proxy(&self) -> Option<LocalProxyEndpoint> {
-        LocalProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), self.port).ok()
+        None
     }
 
     fn stop(&mut self) {}
+}
+
+fn load_client_profile(config_path: Option<&str>) -> Result<ClientConfigProfile, ConfigError> {
+    match config_path {
+        Some(path) => ClientConfigProfile::load_from_file(path),
+        None => Ok(ClientConfigProfile::default()),
+    }
+}
+
+const fn transport_state_label(state: TransportState) -> &'static str {
+    match state {
+        TransportState::Stopped => "stopped",
+        TransportState::Starting => "starting",
+        TransportState::Ready => "ready",
+        TransportState::Degraded => "degraded",
+        TransportState::Offline => "offline",
+    }
+}
+
+fn proxy_json(endpoint: Option<LocalProxyEndpoint>) -> String {
+    match endpoint {
+        Some(endpoint) => format!("\"{}\"", endpoint.socket_addr()),
+        None => "null".to_string(),
+    }
 }
 
 fn profile_to_json(profile: &ClientConfigProfile) -> String {
@@ -74,7 +101,8 @@ fn handle_client_stream(
     mut stream: TcpStream,
     profile_arc: &Arc<RwLock<ClientConfigProfile>>,
     keystore_id: &str,
-    primary_port: u16,
+    transport_state: TransportState,
+    protected_proxy: Option<LocalProxyEndpoint>,
 ) {
     let mut buf = [0u8; 8192];
     let bytes_read = match stream.read(&mut buf) {
@@ -121,10 +149,11 @@ fn handle_client_stream(
 
     if method == "GET" && path == "/api/status" {
         let json_body = format!(
-            r#"{{"status":"ready","device_id":"{}","platform":"{:?}","primary_relay_port":{}}}"#,
+            r#"{{"status":"{}","device_id":"{}","platform":"{:?}","protected_proxy":{}}}"#,
+            transport_state_label(transport_state),
             keystore_id,
             current_platform(),
-            primary_port
+            proxy_json(protected_proxy)
         );
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -178,7 +207,6 @@ fn handle_client_stream(
             }
         }
 
-        // Verify Broker Security Gate
         let gate = BrokerSecurityGate::new(
             vec![
                 BrokerCapability::NavigateService,
@@ -194,10 +222,17 @@ fn handle_client_stream(
             },
         };
 
-        let is_ok = gate.verify_request(&nav_req).is_ok();
+        let transport_usable = matches!(
+            transport_state,
+            TransportState::Ready | TransportState::Degraded
+        ) && protected_proxy.is_some();
+        let is_ok = gate.verify_request(&nav_req).is_ok() && transport_usable;
         let json_body = format!(
-            r#"{{"ok":{},"target":"{}","proxy":"127.0.0.1:{}"}}"#,
-            is_ok, target_url, primary_port
+            r#"{{"ok":{},"target":"{}","transport_status":"{}","protected_proxy":{}}}"#,
+            is_ok,
+            target_url,
+            transport_state_label(transport_state),
+            proxy_json(protected_proxy)
         );
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -215,21 +250,20 @@ fn handle_client_stream(
 fn launch_app_window(url: &str) {
     #[cfg(target_os = "windows")]
     {
-        // Try Microsoft Edge in standalone app window mode
+        // This browser opens only the local WebGate control UI. Protected resources
+        // must not be opened here; T-041 owns the real protected browser runtime.
         let edge_res = Command::new("msedge.exe")
-            .arg(format!("--app={}", url))
+            .arg(format!("--app={url}"))
             .arg("--window-size=1200,820")
             .spawn();
 
         if edge_res.is_err() {
-            // Try Chrome in standalone app mode
             let chrome_res = Command::new("chrome.exe")
-                .arg(format!("--app={}", url))
+                .arg(format!("--app={url}"))
                 .arg("--window-size=1200,820")
                 .spawn();
 
             if chrome_res.is_err() {
-                // Fallback to default browser
                 let _ = Command::new("cmd").args(["/c", "start", "", url]).spawn();
             }
         }
@@ -257,7 +291,7 @@ fn print_editorial_banner(profile: &ClientConfigProfile, active_dest: &str, devi
         " ПРОФИЛЬ       : {} ({})",
         profile.profile_name, profile.profile_id
     );
-    println!(" УСТРОЙСТВО    : {}", device_id);
+    println!(" УСТРОЙСТВО    : {device_id}");
     println!(
         " ОСНОВНОЙ РЕЛЕЙ: {}:{}",
         profile.primary_relay.address, profile.primary_relay.port
@@ -265,7 +299,7 @@ fn print_editorial_banner(profile: &ClientConfigProfile, active_dest: &str, devi
     if let Some(ref fb) = profile.fallback_relay {
         println!(" РЕЗЕРВНЫЙ УЗЕЛ: {}:{}", fb.address, fb.port);
     }
-    println!(" ЦЕЛЕВОЙ РЕСУРС: {}", active_dest);
+    println!(" ЦЕЛЕВОЙ РЕСУРС: {active_dest}");
     println!(" ДОСТУПНЫЕ МАРШРУТЫ И СЕРВИСЫ:");
     for (idx, dest) in profile.destinations.iter().enumerate() {
         let mark = if dest.url == active_dest {
@@ -339,14 +373,16 @@ fn main() {
         i += 1;
     }
 
-    // 1. Load or bind configuration profile
-    let profile = if let Some(path) = config_path_opt {
-        ClientConfigProfile::load_from_file(&path).unwrap_or_default()
-    } else {
-        ClientConfigProfile::default()
+    // An explicitly requested configuration is authoritative input. If it cannot
+    // be read or validated, fail closed instead of silently changing to defaults.
+    let profile = match load_client_profile(config_path_opt.as_deref()) {
+        Ok(profile) => profile,
+        Err(error) => {
+            eprintln!("[Конфигурация] Не удалось загрузить явно указанный профиль: {error:?}");
+            std::process::exit(2);
+        }
     };
 
-    // 2. Resolve target destination
     let target_destination = if let Some(req_dest) = destination_opt {
         if let Some(matched) = profile.find_destination(&req_dest) {
             matched.url.clone()
@@ -378,7 +414,8 @@ fn main() {
         return;
     }
 
-    // 3. Initialize Keystore (T-009, T-010)
+    // InMemoryDeviceKeyStore remains an explicit prototype limitation tracked by
+    // F-032/T-040. It must not be mistaken for production platform key storage.
     let mut keystore = InMemoryDeviceKeyStore::new();
     let device_id = match keystore.generate_key(profile.key_algorithm, &profile.device_label) {
         Ok(ident) => ident.id,
@@ -388,30 +425,24 @@ fn main() {
         }
     };
 
-    // 4. Initialize Failover Transport Controller with profile endpoints (T-008)
-    let primary = DynamicRelayTransport {
+    // Relay configuration alone is not connectivity. The placeholder providers
+    // remain Offline until T-036 replaces them with real bound/probed providers.
+    let primary = ConfiguredRelayTransport {
         name: profile.primary_relay.name.clone(),
-        port: profile.primary_relay.port,
     };
-    let fallback = DynamicRelayTransport {
+    let fallback = ConfiguredRelayTransport {
         name: profile
             .fallback_relay
             .as_ref()
             .map(|r| r.name.clone())
             .unwrap_or_else(|| "Relay-Beta (Резервный)".to_string()),
-        port: profile
-            .fallback_relay
-            .as_ref()
-            .map(|r| r.port)
-            .unwrap_or(43112),
     };
 
     let mut transport_ctrl =
         TransportFailoverController::new(primary, fallback, FailoverConfig::default());
-    transport_ctrl.start();
+    let transport_state = transport_ctrl.start();
     let proxy_ep = transport_ctrl.active_proxy_endpoint();
 
-    // 5. If pure CLI mode was explicitly requested
     if cli_only {
         print_editorial_banner(&profile, &target_destination, &device_id);
         let session_token = "sess_editorial_bound".to_string();
@@ -439,21 +470,28 @@ fn main() {
                 let capsule_started = capsule.start().is_ok();
                 let navigated = capsule.navigate(&target_destination).is_ok();
                 if proxy_attached && capsule_started && navigated {
-                    println!("  [Капсула] Соединение установлено: {}", target_destination);
+                    println!("  [Капсула] Соединение установлено: {target_destination}");
                     println!(
                         "  [Капсула] Граница изоляции активна. Сетевые маршруты ОС не затронуты."
                     );
                 }
+            } else {
+                println!(
+                    "  [Транспорт] OFFLINE: реальный защищённый proxy/tunnel не подтверждён; навигация запрещена."
+                );
             }
         }
         println!(
-            "\nКлиент WebGate активен [Платформа: {:?} | Устройство: {}]",
-            platform, device_id
+            "\nКлиент WebGate запущен [Платформа: {:?} | Устройство: {} | Транспорт: {}]",
+            platform,
+            device_id,
+            transport_state_label(transport_state)
         );
         return;
     }
 
-    // 6. Default User Launch: Lightweight GUI Application Window
+    // Default user launch is a local control UI only. It is not the protected
+    // browser runtime and cannot claim protected connectivity while transport is Offline.
     let listener = match TcpListener::bind("127.0.0.1:43110") {
         Ok(l) => l,
         Err(_) => match TcpListener::bind("127.0.0.1:0") {
@@ -472,25 +510,71 @@ fn main() {
 
     let ui_url = format!("http://127.0.0.1:{}", bound_addr.port());
     println!("───────────────────────────────────────────────────────────────────────────");
-    println!(" WebGate Окно Клиента запущено: {}", ui_url);
-    println!(" Выбор сервисов и привязка конфигураций доступны в открывшемся окне.");
+    println!(" WebGate локальная панель клиента: {ui_url}");
+    println!(
+        " Защищённый транспорт: {} (proxy: {})",
+        transport_state_label(transport_state),
+        proxy_json(proxy_ep)
+    );
     println!("───────────────────────────────────────────────────────────────────────────");
 
     let profile_arc = Arc::new(RwLock::new(profile));
     let profile_clone = Arc::clone(&profile_arc);
     let dev_id_clone = device_id.clone();
-    let port = bound_addr.port();
 
-    // Spawn server thread
     let server_handle = thread::spawn(move || {
         for s in listener.incoming().flatten() {
-            handle_client_stream(s, &profile_clone, &dev_id_clone, port);
+            handle_client_stream(
+                s,
+                &profile_clone,
+                &dev_id_clone,
+                transport_state,
+                proxy_ep,
+            );
         }
     });
 
-    // Launch Native Desktop Application Window
     launch_app_window(&ui_url);
 
-    // Keep client alive for the UI session
     let _ = server_handle.join();
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_profile_is_used_only_when_no_config_was_requested() {
+        let profile = load_client_profile(None).unwrap();
+        assert_eq!(profile, ClientConfigProfile::default());
+    }
+
+    #[test]
+    fn explicit_missing_config_returns_error_instead_of_defaults() {
+        let missing = std::env::temp_dir().join(format!(
+            "webgate-config-missing-{}-{}.toml",
+            std::process::id(),
+            "t035"
+        ));
+        let _ = std::fs::remove_file(&missing);
+
+        let result = load_client_profile(missing.to_str());
+        assert!(matches!(result, Err(ConfigError::FileNotFound(_))));
+    }
+
+    #[test]
+    fn configured_transport_is_offline_without_backend() {
+        let transport = ConfiguredRelayTransport {
+            name: "configured-only".to_string(),
+        };
+        assert_eq!(transport.state(), TransportState::Offline);
+        assert_eq!(transport.local_proxy(), None);
+    }
+
+    #[test]
+    fn offline_transport_never_serializes_a_protected_proxy() {
+        assert_eq!(proxy_json(None), "null");
+        assert_eq!(transport_state_label(TransportState::Offline), "offline");
+    }
 }

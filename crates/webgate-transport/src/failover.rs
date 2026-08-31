@@ -23,7 +23,7 @@ impl Default for TransportHealth {
         Self {
             consecutive_failures: 0,
             last_latency_ms: 0,
-            is_responsive: true,
+            is_responsive: false,
             last_probe_epoch_sec: 0,
         }
     }
@@ -73,12 +73,30 @@ impl<P: TransportProvider, F: TransportProvider> TransportFailoverController<P, 
         }
     }
 
-    /// Initializes and starts the transport hierarchy, selecting Primary by default.
+    fn provider_ready<T: TransportProvider>(provider: &T) -> bool {
+        provider.state() == TransportState::Ready && provider.local_proxy().is_some()
+    }
+
+    /// Initializes the hierarchy using only a provider that is already proven Ready
+    /// and exposes a loopback proxy endpoint. Configuration alone is never readiness.
     pub fn start(&mut self) -> TransportState {
-        self.active_role = Some(TransportRole::Primary);
-        self.primary_health.is_responsive = true;
-        self.primary_health.consecutive_failures = 0;
-        self.primary.state()
+        self.active_role = None;
+        self.primary_health = TransportHealth::default();
+        self.fallback_health = TransportHealth::default();
+
+        if Self::provider_ready(&self.primary) {
+            self.active_role = Some(TransportRole::Primary);
+            self.primary_health.is_responsive = true;
+            return TransportState::Ready;
+        }
+
+        if Self::provider_ready(&self.fallback) {
+            self.active_role = Some(TransportRole::Fallback);
+            self.fallback_health.is_responsive = true;
+            return TransportState::Ready;
+        }
+
+        TransportState::Offline
     }
 
     #[must_use]
@@ -90,9 +108,13 @@ impl<P: TransportProvider, F: TransportProvider> TransportFailoverController<P, 
     #[must_use]
     pub fn active_proxy_endpoint(&self) -> Option<LocalProxyEndpoint> {
         match self.active_role {
-            Some(TransportRole::Primary) => self.primary.local_proxy(),
-            Some(TransportRole::Fallback) => self.fallback.local_proxy(),
-            None => None,
+            Some(TransportRole::Primary) if Self::provider_ready(&self.primary) => {
+                self.primary.local_proxy()
+            }
+            Some(TransportRole::Fallback) if Self::provider_ready(&self.fallback) => {
+                self.fallback.local_proxy()
+            }
+            _ => None,
         }
     }
 
@@ -101,57 +123,71 @@ impl<P: TransportProvider, F: TransportProvider> TransportFailoverController<P, 
     pub fn aggregate_state(&self) -> TransportState {
         match self.active_role {
             Some(TransportRole::Primary) => {
-                if self.primary_health.consecutive_failures > 0 {
+                if !Self::provider_ready(&self.primary) {
+                    TransportState::Offline
+                } else if self.primary_health.consecutive_failures > 0 {
                     TransportState::Degraded
                 } else {
-                    self.primary.state()
+                    TransportState::Ready
                 }
             }
             Some(TransportRole::Fallback) => {
-                if self.fallback_health.consecutive_failures > 0 {
+                if !Self::provider_ready(&self.fallback) {
+                    TransportState::Offline
+                } else if self.fallback_health.consecutive_failures > 0 {
                     TransportState::Degraded
                 } else {
-                    self.fallback.state()
+                    TransportState::Ready
                 }
             }
             None => TransportState::Offline,
         }
     }
 
+    fn observation_is_healthy(&self, success: bool, latency_ms: u64, provider_ready: bool) -> bool {
+        let latency_healthy = self.config.high_latency_threshold_ms == 0
+            || latency_ms <= self.config.high_latency_threshold_ms;
+        success && provider_ready && latency_healthy
+    }
+
     /// Records a probe/traffic observation for the currently active transport.
+    /// Repeated high-latency observations are treated as failures instead of silently
+    /// ignoring the configured threshold.
     pub fn record_observation(&mut self, success: bool, latency_ms: u64, now_epoch_sec: u64) {
+        let primary_ready = Self::provider_ready(&self.primary);
+        let fallback_ready = Self::provider_ready(&self.fallback);
+
         match self.active_role {
             Some(TransportRole::Primary) => {
                 self.primary_health.last_probe_epoch_sec = now_epoch_sec;
                 self.primary_health.last_latency_ms = latency_ms;
-                if success {
+                if self.observation_is_healthy(success, latency_ms, primary_ready) {
                     self.primary_health.consecutive_failures = 0;
                     self.primary_health.is_responsive = true;
                 } else {
                     self.primary_health.consecutive_failures =
                         self.primary_health.consecutive_failures.saturating_add(1);
                     if self.primary_health.consecutive_failures
-                        >= self.config.max_consecutive_failures
+                        >= self.config.max_consecutive_failures.max(1)
                     {
                         self.primary_health.is_responsive = false;
-                        self.trigger_failover_to_fallback(now_epoch_sec);
+                        self.trigger_failover_to_fallback(now_epoch_sec, fallback_ready);
                     }
                 }
             }
             Some(TransportRole::Fallback) => {
                 self.fallback_health.last_probe_epoch_sec = now_epoch_sec;
                 self.fallback_health.last_latency_ms = latency_ms;
-                if success {
+                if self.observation_is_healthy(success, latency_ms, fallback_ready) {
                     self.fallback_health.consecutive_failures = 0;
                     self.fallback_health.is_responsive = true;
                 } else {
                     self.fallback_health.consecutive_failures =
                         self.fallback_health.consecutive_failures.saturating_add(1);
                     if self.fallback_health.consecutive_failures
-                        >= self.config.max_consecutive_failures
+                        >= self.config.max_consecutive_failures.max(1)
                     {
                         self.fallback_health.is_responsive = false;
-                        // Both failed -> fail closed
                         self.active_role = None;
                     }
                 }
@@ -160,7 +196,8 @@ impl<P: TransportProvider, F: TransportProvider> TransportFailoverController<P, 
         }
     }
 
-    /// Probes standby primary when operating on fallback; switches back if primary is healthy and cooldown expired.
+    /// Probes standby primary when operating on fallback; switches back only after
+    /// cooldown when the probe succeeds and the provider is actually Ready.
     pub fn probe_standby_primary(&mut self, probe_successful: bool, now_epoch_sec: u64) -> bool {
         if self.active_role != Some(TransportRole::Fallback) {
             return false;
@@ -171,7 +208,7 @@ impl<P: TransportProvider, F: TransportProvider> TransportFailoverController<P, 
             return false;
         }
 
-        if probe_successful {
+        if probe_successful && Self::provider_ready(&self.primary) {
             self.primary_health.consecutive_failures = 0;
             self.primary_health.is_responsive = true;
             self.primary_health.last_probe_epoch_sec = now_epoch_sec;
@@ -182,7 +219,13 @@ impl<P: TransportProvider, F: TransportProvider> TransportFailoverController<P, 
         }
     }
 
-    fn trigger_failover_to_fallback(&mut self, now_epoch_sec: u64) {
+    fn trigger_failover_to_fallback(&mut self, now_epoch_sec: u64, fallback_ready: bool) {
+        if !fallback_ready {
+            self.active_role = None;
+            self.fallback_health.is_responsive = false;
+            return;
+        }
+
         self.active_role = Some(TransportRole::Fallback);
         self.last_failover_epoch_sec = now_epoch_sec;
         self.fallback_health.consecutive_failures = 0;
@@ -194,6 +237,8 @@ impl<P: TransportProvider, F: TransportProvider> TransportFailoverController<P, 
         self.active_role = None;
         self.primary.stop();
         self.fallback.stop();
+        self.primary_health.is_responsive = false;
+        self.fallback_health.is_responsive = false;
     }
 }
 
@@ -211,12 +256,28 @@ mod tests {
     }
 
     impl MockTransport {
-        fn new(name: &'static str, port: u16) -> Self {
+        fn ready(name: &'static str, port: u16) -> Self {
             let endpoint = LocalProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port).ok();
             Self {
                 name,
                 state: TransportState::Ready,
                 endpoint,
+            }
+        }
+
+        fn offline(name: &'static str) -> Self {
+            Self {
+                name,
+                state: TransportState::Offline,
+                endpoint: None,
+            }
+        }
+
+        fn ready_without_endpoint(name: &'static str) -> Self {
+            Self {
+                name,
+                state: TransportState::Ready,
+                endpoint: None,
             }
         }
     }
@@ -241,12 +302,12 @@ mod tests {
 
     #[test]
     fn starts_on_primary_and_returns_primary_proxy() {
-        let primary = MockTransport::new("Primary-Relay", 40001);
-        let fallback = MockTransport::new("Fallback-Relay", 40002);
+        let primary = MockTransport::ready("Primary-Relay", 40001);
+        let fallback = MockTransport::ready("Fallback-Relay", 40002);
         let mut controller =
             TransportFailoverController::new(primary, fallback, FailoverConfig::default());
 
-        controller.start();
+        assert_eq!(controller.start(), TransportState::Ready);
         assert_eq!(controller.active_role(), Some(TransportRole::Primary));
         assert_eq!(
             controller
@@ -260,9 +321,103 @@ mod tests {
     }
 
     #[test]
+    fn startup_uses_ready_fallback_when_primary_is_offline() {
+        let primary = MockTransport::offline("Primary-Relay");
+        let fallback = MockTransport::ready("Fallback-Relay", 40002);
+        let mut controller =
+            TransportFailoverController::new(primary, fallback, FailoverConfig::default());
+
+        assert_eq!(controller.start(), TransportState::Ready);
+        assert_eq!(controller.active_role(), Some(TransportRole::Fallback));
+        assert_eq!(
+            controller
+                .active_proxy_endpoint()
+                .unwrap()
+                .socket_addr()
+                .port(),
+            40002
+        );
+    }
+
+    #[test]
+    fn startup_fails_closed_when_no_provider_is_ready() {
+        let primary = MockTransport::offline("Primary-Relay");
+        let fallback = MockTransport::offline("Fallback-Relay");
+        let mut controller =
+            TransportFailoverController::new(primary, fallback, FailoverConfig::default());
+
+        assert_eq!(controller.start(), TransportState::Offline);
+        assert_eq!(controller.active_role(), None);
+        assert_eq!(controller.active_proxy_endpoint(), None);
+    }
+
+    #[test]
+    fn ready_state_without_proxy_endpoint_is_not_usable() {
+        let primary = MockTransport::ready_without_endpoint("Primary-Relay");
+        let fallback = MockTransport::offline("Fallback-Relay");
+        let mut controller =
+            TransportFailoverController::new(primary, fallback, FailoverConfig::default());
+
+        assert_eq!(controller.start(), TransportState::Offline);
+        assert_eq!(controller.active_role(), None);
+    }
+
+    #[test]
+    fn high_latency_counts_toward_failover_threshold() {
+        let primary = MockTransport::ready("Primary-Relay", 40001);
+        let fallback = MockTransport::ready("Fallback-Relay", 40002);
+        let config = FailoverConfig {
+            max_consecutive_failures: 2,
+            high_latency_threshold_ms: 1000,
+            switchback_cooldown_sec: 20,
+        };
+        let mut controller = TransportFailoverController::new(primary, fallback, config);
+        controller.start();
+
+        controller.record_observation(true, 1501, 10);
+        assert_eq!(controller.aggregate_state(), TransportState::Degraded);
+        controller.record_observation(true, 1501, 11);
+        assert_eq!(controller.active_role(), Some(TransportRole::Fallback));
+    }
+
+    #[test]
+    fn zero_latency_threshold_disables_latency_failure_policy() {
+        let primary = MockTransport::ready("Primary-Relay", 40001);
+        let fallback = MockTransport::ready("Fallback-Relay", 40002);
+        let config = FailoverConfig {
+            max_consecutive_failures: 1,
+            high_latency_threshold_ms: 0,
+            ..Default::default()
+        };
+        let mut controller = TransportFailoverController::new(primary, fallback, config);
+        controller.start();
+
+        controller.record_observation(true, u64::MAX, 10);
+        assert_eq!(controller.active_role(), Some(TransportRole::Primary));
+        assert_eq!(controller.aggregate_state(), TransportState::Ready);
+    }
+
+    #[test]
+    fn failover_fails_closed_instead_of_selecting_unready_fallback() {
+        let primary = MockTransport::ready("Primary-Relay", 40001);
+        let fallback = MockTransport::offline("Fallback-Relay");
+        let config = FailoverConfig {
+            max_consecutive_failures: 1,
+            ..Default::default()
+        };
+        let mut controller = TransportFailoverController::new(primary, fallback, config);
+        controller.start();
+
+        controller.record_observation(false, 100, 10);
+        assert_eq!(controller.active_role(), None);
+        assert_eq!(controller.aggregate_state(), TransportState::Offline);
+        assert_eq!(controller.active_proxy_endpoint(), None);
+    }
+
+    #[test]
     fn fails_over_to_fallback_after_consecutive_failures() {
-        let primary = MockTransport::new("Primary-Relay", 40001);
-        let fallback = MockTransport::new("Fallback-Relay", 40002);
+        let primary = MockTransport::ready("Primary-Relay", 40001);
+        let fallback = MockTransport::ready("Fallback-Relay", 40002);
         let config = FailoverConfig {
             max_consecutive_failures: 3,
             high_latency_threshold_ms: 1000,
@@ -271,16 +426,13 @@ mod tests {
         let mut controller = TransportFailoverController::new(primary, fallback, config);
         controller.start();
 
-        // 1st failure -> degraded
         controller.record_observation(false, 200, 100);
         assert_eq!(controller.active_role(), Some(TransportRole::Primary));
         assert_eq!(controller.aggregate_state(), TransportState::Degraded);
 
-        // 2nd failure -> still primary degraded
         controller.record_observation(false, 200, 101);
         assert_eq!(controller.active_role(), Some(TransportRole::Primary));
 
-        // 3rd failure -> triggers failover to fallback
         controller.record_observation(false, 200, 102);
         assert_eq!(controller.active_role(), Some(TransportRole::Fallback));
         assert_eq!(
@@ -295,8 +447,8 @@ mod tests {
 
     #[test]
     fn fails_closed_when_both_transports_fail() {
-        let primary = MockTransport::new("Primary-Relay", 40001);
-        let fallback = MockTransport::new("Fallback-Relay", 40002);
+        let primary = MockTransport::ready("Primary-Relay", 40001);
+        let fallback = MockTransport::ready("Fallback-Relay", 40002);
         let config = FailoverConfig {
             max_consecutive_failures: 2,
             ..Default::default()
@@ -304,16 +456,13 @@ mod tests {
         let mut controller = TransportFailoverController::new(primary, fallback, config);
         controller.start();
 
-        // Fail primary
         controller.record_observation(false, 100, 10);
         controller.record_observation(false, 100, 11);
         assert_eq!(controller.active_role(), Some(TransportRole::Fallback));
 
-        // Fail fallback
         controller.record_observation(false, 100, 12);
         controller.record_observation(false, 100, 13);
 
-        // Both down -> fails closed (active_role is None, proxy is None, state is Offline)
         assert_eq!(controller.active_role(), None);
         assert_eq!(controller.active_proxy_endpoint(), None);
         assert_eq!(controller.aggregate_state(), TransportState::Offline);
@@ -321,8 +470,8 @@ mod tests {
 
     #[test]
     fn switches_back_to_primary_after_cooldown_and_successful_probe() {
-        let primary = MockTransport::new("Primary-Relay", 40001);
-        let fallback = MockTransport::new("Fallback-Relay", 40002);
+        let primary = MockTransport::ready("Primary-Relay", 40001);
+        let fallback = MockTransport::ready("Fallback-Relay", 40002);
         let config = FailoverConfig {
             max_consecutive_failures: 2,
             switchback_cooldown_sec: 30,
@@ -331,16 +480,13 @@ mod tests {
         let mut controller = TransportFailoverController::new(primary, fallback, config);
         controller.start();
 
-        // Failover at t=100
         controller.record_observation(false, 100, 99);
         controller.record_observation(false, 100, 100);
         assert_eq!(controller.active_role(), Some(TransportRole::Fallback));
 
-        // Attempt probe before cooldown (t=115 < 100+30) -> rejected
         assert!(!controller.probe_standby_primary(true, 115));
         assert_eq!(controller.active_role(), Some(TransportRole::Fallback));
 
-        // Attempt probe after cooldown (t=131 >= 100+30) -> successful switchback
         assert!(controller.probe_standby_primary(true, 131));
         assert_eq!(controller.active_role(), Some(TransportRole::Primary));
         assert_eq!(
