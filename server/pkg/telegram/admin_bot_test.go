@@ -57,13 +57,20 @@ func TestAdminBotCommands(t *testing.T) {
 		t.Fatalf("failed to stop service via callback: %s", resp.Text)
 	}
 
-	// 6. /bind command
+	// 6. /bind command must mutate through ServiceRegistry, not a detached snapshot.
 	resp = bot.HandleCommand(999001, "/bind tgnode 8099 ./bin/new-node.exe")
 	if !strings.Contains(resp.Text, "8099") || !strings.Contains(resp.Text, "привязаны") {
 		t.Fatalf("bind command failed: %s", resp.Text)
 	}
-	if svc.Port != 8099 {
-		t.Fatalf("expected port updated to 8099, got %d", svc.Port)
+	stored, err := svcReg.GetByID(svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Port != 8099 || stored.ExecutablePath != "./bin/new-node.exe" || stored.UpstreamURL != "http://127.0.0.1:8099" {
+		t.Fatalf("bind command did not persist through registry: %#v", stored)
+	}
+	if svc.Port == 8099 {
+		t.Fatal("caller-owned service pointer unexpectedly remained registry storage")
 	}
 
 	// 7. Unauthorized user rejected

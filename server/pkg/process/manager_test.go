@@ -35,6 +35,14 @@ func TestProcessManagerLifecycle(t *testing.T) {
 	if inst.State != string(domain.ProcessStateRunning) {
 		t.Fatalf("expected state RUNNING, got %s", inst.State)
 	}
+	stored, err := svcReg.GetByID(svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProcessState != domain.ProcessStateRunning || stored.ProcessPID != inst.PID || stored.StartedAt == nil {
+		t.Fatalf("registry runtime not updated on start: %#v", stored)
+	}
+	configVersion := stored.Version
 
 	if _, err := pm.StartService(svc.ID); err != process.ErrServiceAlreadyRunning {
 		t.Fatalf("expected ErrServiceAlreadyRunning, got %v", err)
@@ -47,9 +55,29 @@ func TestProcessManagerLifecycle(t *testing.T) {
 	if reinst.State != string(domain.ProcessStateRunning) {
 		t.Fatalf("expected running state after restart, got %s", reinst.State)
 	}
+	stored, err = svcReg.GetByID(svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProcessState != domain.ProcessStateRunning || stored.ProcessPID != reinst.PID {
+		t.Fatalf("registry runtime not updated on restart: %#v", stored)
+	}
+	if stored.Version != configVersion {
+		t.Fatalf("runtime lifecycle changed config version: got %d want %d", stored.Version, configVersion)
+	}
 
 	if err := pm.StopService(svc.ID); err != nil {
 		t.Fatalf("failed to stop service: %v", err)
+	}
+	stored, err = svcReg.GetByID(svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProcessState != domain.ProcessStateStopped || stored.ProcessPID != 0 || stored.StartedAt != nil {
+		t.Fatalf("registry runtime not cleared on stop: %#v", stored)
+	}
+	if stored.Version != configVersion {
+		t.Fatalf("stopping runtime changed config version: got %d want %d", stored.Version, configVersion)
 	}
 	if _, err := pm.StartService("non_existent_service"); err == nil {
 		t.Fatalf("expected error for unknown service")
@@ -75,8 +103,12 @@ func TestProcessManagerDoesNotFakeRunningOnSpawnFailure(t *testing.T) {
 	if inst, err := pm.StartService(svc.ID); err == nil || inst != nil {
 		t.Fatalf("expected real spawn failure, got instance=%v err=%v", inst, err)
 	}
-	if svc.ProcessState == domain.ProcessStateRunning || svc.ProcessPID != 0 {
-		t.Fatalf("spawn failure must not report RUNNING: state=%s pid=%d", svc.ProcessState, svc.ProcessPID)
+	stored, err := svcReg.GetByID(svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProcessState == domain.ProcessStateRunning || stored.ProcessPID != 0 || stored.StartedAt != nil {
+		t.Fatalf("spawn failure must not report RUNNING: %#v", stored)
 	}
 	if _, exists := pm.GetProcess(svc.ID); exists {
 		t.Fatalf("failed process must not be stored as an active instance")

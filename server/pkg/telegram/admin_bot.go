@@ -18,11 +18,11 @@ import (
 	"github.com/Homiakus/WebGate/server/pkg/registry"
 )
 
-// InlineButton defines an interactive inline button in Telegram chat.
+// InlineButton defines an interactive inline button for Telegram messages.
 type InlineButton struct {
-	Text         string            `json:"text"`
-	CallbackData string            `json:"callback_data,omitempty"`
-	URL          string            `json:"url,omitempty"`
+	Text         string             `json:"text"`
+	CallbackData string             `json:"callback_data,omitempty"`
+	URL          string             `json:"url,omitempty"`
 	WebApp       *TelegramWebAppURL `json:"web_app,omitempty"`
 }
 
@@ -1031,17 +1031,26 @@ func (b *AdminBot) bindServiceExec(slugOrID string, port int, execPath string) B
 		return BotResponse{Text: "❌ Сервис не найден: " + slugOrID, Timestamp: time.Now().UTC()}
 	}
 
-	svc.Port = port
-	svc.ExecutablePath = execPath
-	svc.UpstreamURL = fmt.Sprintf("http://127.0.0.1:%d", port)
-	svc.UpdatedAt = time.Now().UTC()
+	if err := b.services.UpdateExecutable(svc.ID, port, execPath, nil); err != nil {
+		return BotResponse{
+			Text:      fmt.Sprintf("❌ Ошибка привязки исполняемого файла к *%s*: %v", svc.Name, err),
+			Timestamp: time.Now().UTC(),
+		}
+	}
+	updated, err := b.services.GetByID(svc.ID)
+	if err != nil {
+		return BotResponse{
+			Text:      fmt.Sprintf("❌ Не удалось перечитать обновлённый сервис *%s*: %v", svc.Name, err),
+			Timestamp: time.Now().UTC(),
+		}
+	}
 
 	return BotResponse{
 		Text: fmt.Sprintf("✅ *Исполняемый файл и порт привязаны!*\n\n• Сервис: *%s* (`%s`)\n• Порт: `%d`\n• Файл: `%s`\n• Upstream: `%s`",
-			svc.Name, svc.Slug, port, execPath, svc.UpstreamURL),
+			updated.Name, updated.Slug, updated.Port, updated.ExecutablePath, updated.UpstreamURL),
 		InlineKeyboard: [][]InlineButton{
 			{
-				{Text: fmt.Sprintf("▶ Запустить %s", svc.Slug), CallbackData: "start:" + svc.ID},
+				{Text: fmt.Sprintf("▶ Запустить %s", updated.Slug), CallbackData: "start:" + updated.ID},
 			},
 			{
 				{Text: "📊 Все сервисы", CallbackData: "menu:services"},

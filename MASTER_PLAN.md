@@ -4,7 +4,7 @@
 **Primary branch:** `main`  
 **Plan status:** ACTIVE  
 **Reconciled:** 2026-08-31  
-**Last qualified main before Iteration 13C:** `2805999a3b59472cbbb02156aefee99689b3cf60`
+**Last qualified main before Iteration 14:** `e7dc960722cffc68b778bb35cab449af096f8273`
 
 This file is the **only execution source of truth**. Supporting documents under `docs/` are evidence/design references; they do not own task state, priority, acceptance, or release readiness.
 
@@ -70,7 +70,7 @@ Material unexpected evidence becomes `F-XXX` before task scope/order changes.
 - **T-043:** loopback-only server upstream invariant at construction/mutation/use; environment-proxy and redirect escape contained.
 - **T-049:** reproducible SecureAcces v0.4.0 dependency anchor + Go 1.26.6.
 - **T-050:** gateway depends on context-aware `ServiceAuthorizer`; missing/unavailable authority is explicit fail-closed `503`, ordinary policy deny is `403`, and production `/svc/*` no longer uses the WebGate-owned map surrogate.
-- **Iteration 13C public half of T-052:** public WebGate contains a loopback-only remote authority client, explicit SecureAcces `AccountID` device binding, strict response validation, redirect refusal, bounded responses, and child-process control-secret scrubbing. It becomes a verified foundation only after the final atomic commit reaches `main` and repeated main CI passes.
+- **T-052 public half:** final/main `e7dc960722cffc68b778bb35cab449af096f8273` provides the loopback-only remote authority client, explicit SecureAcces `AccountID` device binding, strict response validation, redirect/proxy refusal, bounded responses, and child-process control-secret scrubbing; pre-promotion and repeated `main` CI passed.
 
 ## Not production-qualified
 
@@ -82,7 +82,7 @@ Material unexpected evidence becomes `F-XXX` before task scope/order changes.
 - **Private SecureAcces authority process in its own `main`:** candidate exists only on a private work branch; executable CI is currently blocked before runner steps.
 - Durable SecureAcces Accounts/Users/Memberships/Sessions/Audit deployment + backup/restore evidence.
 - SecureAcces-backed administrator management authorization.
-- Durable WebGate-owned service/device/release/audit/config state.
+- Durable WebGate-owned service/device/release/audit/config state. T-039A closes the mutable ownership prerequisite only; on-disk transactional persistence remains open.
 - Real end-to-end/chaos/release qualification.
 
 ---
@@ -113,6 +113,7 @@ Material unexpected evidence becomes `F-XXX` before task scope/order changes.
 - **I-022 Mutation resistance:** critical allow/deny/state logic has meaningful mutation testing.
 - **I-023 Private-source boundary:** public WebGate must not implicitly publish private SecureAcces implementation.
 - **I-024 Control-secret containment:** authority/admin credentials are not forwarded to protected upstreams or inherited by WebGate-launched service processes.
+- **I-025 Registry ownership:** WebGate registries own their mutable state; registration inputs and read results are detached snapshots, and mutations pass through explicit locked APIs before durable persistence is introduced.
 
 ---
 
@@ -124,7 +125,7 @@ Historical F-001..F-028 remain in Git history.
 - **F-030 — Synthetic client transport readiness:** CONTAINED by T-035; real provider T-036.
 - **F-031 — No real Servo/proxied runtime:** OPEN / Critical → T-041.
 - **F-032 — Synthetic production keystore:** OPEN / Critical → T-040.
-- **F-033 — Real SecureAcces production authority absent:** OPEN / Critical → T-052. T-050 removed the surrogate and Iteration 13C adds the public bridge client, but private provider is not yet qualified/promoted.
+- **F-033 — Real SecureAcces production authority absent:** OPEN / Critical → T-052. T-050 removed the surrogate and the public bridge is now qualified in `main`, but private provider is not yet qualified/promoted.
 - **F-034 — Origin reverse connectivity absent:** OPEN / Critical → T-037.
 - **F-035 — Security/operations state ephemeral:** OPEN / High → T-039 plus SecureAcces persistence in T-052.
 - **F-036 — Admin auth is interim shared token:** OPEN/CONTAINED / High → T-051.
@@ -132,9 +133,10 @@ Historical F-001..F-028 remain in Git history.
 - **F-038 — Race/mutation/fuzz CI depth missing:** OPEN / High → T-044.
 - **F-039 — Runtime client config can report false success:** OPEN / High → T-048.
 - **F-040 — SecureAcces dependency/toolchain/auth boundaries under-modeled:** PARTIALLY RESOLVED by T-049/T-050; T-052/T-051 remain.
-- **F-041 — Private/durable SecureAcces deployment channel absent:** OPEN / Critical → T-052. `Homiakus/SecureAcces` is private; canonical `github.com/Homiakus/secureaccess` is not published; full source vendoring into public WebGate is forbidden. A private sidecar candidate now exists, but private GitHub Actions currently fail before the first executable step and cannot qualify it.
-- **F-042 — Device identity model conflated tenant UserID with global SecureAcces AccountID:** CONTAINED / High → T-052 + T-039. Public model now has explicit `AccountID`; remote authority refuses a device without it and never derives it from legacy `UserID`. Durable enrollment migration/cleanup remains with durable device state.
-- **F-043 — WebGate-launched service processes inherited control-plane environment secrets:** RESOLVED by Iteration 13C once promoted. Child environment explicitly removes `WEBGATE_AUTHORITY_TOKEN` and `WEBGATE_ADMIN_TOKEN`; focused tests protect the invariant.
+- **F-041 — Private/durable SecureAcces deployment channel absent:** OPEN / Critical → T-052. `Homiakus/SecureAcces` is private; canonical `github.com/Homiakus/secureaccess` is not published; full source vendoring into public WebGate is forbidden. A private sidecar candidate exists, but private GitHub Actions still fail before the first executable step and cannot qualify it.
+- **F-042 — Device identity model conflated tenant UserID with global SecureAcces AccountID:** CONTAINED / High → T-052 + T-039. Public model has explicit `AccountID`; remote authority refuses a device without it and never derives it from legacy `UserID`. Durable enrollment migration/cleanup remains with durable device state.
+- **F-043 — WebGate-launched service processes inherited control-plane environment secrets:** RESOLVED by T-052 public half. Child environment explicitly removes `WEBGATE_AUTHORITY_TOKEN` and `WEBGATE_ADMIN_TOKEN`; focused tests protect the invariant.
+- **F-044 — Registry state escaped through live mutable pointers:** IN PROGRESS / High → T-039. `ServiceRegistry`, `DeviceRegistry`, and `ReleaseRegistry` stored caller pointers and returned internal pointers/slices; callers could mutate state outside locks, validation/versioning and any future persistence transaction. ProcessManager and Telegram `/bind` also depended on this write-through behavior. T-039A removes those aliases and routes runtime/bind writes through explicit registry APIs; durable backend remains T-039B.
 
 T-038 is a convergence umbrella. Inspection of real upstream progressively decomposed it into T-049 → T-050 → T-052 → T-051. This remains one living plan, not a parallel roadmap.
 
@@ -181,7 +183,7 @@ Umbrella only. Complete when T-049 + T-050 + T-052 + T-051 are complete.
 ### T-052 — Private durable SecureAcces production provider/deployment
 **Status:** IN_PROGRESS / PRIVATE-CI-BLOCKED · **Priority:** P0 · **Type:** AUTHORIZATION / PERSISTENCE / SUPPLY CHAIN
 
-Public half implemented and adversarially qualified on work branch:
+Public half is qualified in WebGate `main` at `e7dc960722cffc68b778bb35cab449af096f8273` with repeated main CI PASS:
 - `RemoteServiceAuthorizer` accepts only literal-loopback HTTP endpoint + ≥32-byte bridge token; no URL credentials/path/query/fragment.
 - HTTP environment proxy disabled; redirects are not followed; timeout and response body are bounded; unknown/malformed responses fail unavailable.
 - Request carries only opaque session token plus WebGate server-owned service tenant/workspace/id/permission and explicit DeviceID/AccountID.
@@ -190,12 +192,12 @@ Public half implemented and adversarially qualified on work branch:
 - device without AccountID is denied before bridge I/O; no `UserID → AccountID` fallback exists.
 - production bootstrap uses remote provider only for an explicit valid configuration; unconfigured remains `UnavailableServiceAuthorizer`.
 - WebGate child processes do not inherit authority/admin control secrets.
-- RED `4113b68efca0a91335feb86b05b5bc574c5bb5e6`; first green `37139e07b1bb3d001504042cd8650fa41e037488` rejected by stale structural test + gofmt; green2 `160520950d3c9a8cd7dd5802e7870c64a8866631` PASS; adversarial extension `cd856403d849109500a6db1928b1bdb8726c2d18` PASS.
+- RED `4113b68efca0a91335feb86b05b5bc574c5bb5e6`; rejected first green `37139e07b1bb3d001504042cd8650fa41e037488`; green2 `160520950d3c9a8cd7dd5802e7870c64a8866631` PASS; adversarial extension `cd856403d849109500a6db1928b1bdb8726c2d18` PASS; final/main `e7dc960722cffc68b778bb35cab449af096f8273` PASS before and after promotion.
 
 Private half candidate in `Homiakus/SecureAcces`:
 - RED `c0a0f82cc378142724a42e7178687919ce5ccdb9` characterizes durable session/device/account authorization, Pebble restart/revocation durability, store outage and bridge-secret rules.
 - green candidate `b1d412387087bcaed9da5abf5148acd558c8708c` adds private loopback `webgate-authority` backed by `secureaccess.Service + axiomstore.OpenPebble`, store health probe, audit-failure fail-closed, bridge authentication, exact session-device/account checks and hardened HTTP server.
-- Candidate is **not qualified and not in private main**. Both SecureAcces root/Axiom workflows failed before any job step (`steps=[]`, no log blob); one diagnostic Axiom Go 1.26 rerun reproduced the same pre-step infrastructure failure. No further retry is allowed to convert infrastructure failure into PASS.
+- Candidate is **not qualified and not in private main**. SecureAcces root/Axiom workflows fail before any executable job step (`steps=[]`, no log blob). A later controlled diagnostic Axiom Go 1.26 rerun again reproduced the same pre-step infrastructure failure. No retry-until-green is allowed.
 
 T-052 remains incomplete until private executable CI runs real steps and passes, private main is promoted normally, public/private protocol compatibility is exercised, and backup/restore evidence is attached.
 
@@ -204,8 +206,12 @@ T-052 remains incomplete until private executable CI runs real steps and passes,
 After T-052, replace shared-token-only authority with request-scoped SecureAcces principal/actor management authorization. Shared token may remain only as explicitly scoped bootstrap/recovery factor. Remove remaining AdminAPI legacy-authorizer dependency and audit privileged decisions.
 
 ### T-039 — Durable transactional WebGate-owned state
-**Status:** TODO · **Priority:** P0/P1  
+**Status:** IN_PROGRESS · **Priority:** P0/P1  
 Persist WebGate-owned service/device/release/audit/config metadata. Durable device schema must make `AccountID` authoritative and remove/deprecate legacy `UserID` identity semantics without migration-by-guessing.
+
+**T-039A — Registry ownership boundary before persistence:** branch qualification PASS. Corrected RED `fb84310a8473522dd932219bb8e0b312914f2015` passed gofmt/vet and failed `go test` because caller mutations changed registered service/device state. Green `1b06e56c3808ca85c7866d379dcbafa6d14f1b66` makes service/device/release inputs and reads detached, deep-copies `ExecArgs`, release artifacts and pointer timestamps, isolates returned device challenges, adds `UpdateProcessRuntime`, moves ProcessManager writes through the registry, and moves Telegram `/bind` through `UpdateExecutable`. Full branch CI PASS. Mutant `7afc1e4cceb5e4d9ce7a1960d84ed4d88470a7ab` returned an internal service pointer; gofmt/vet passed and `TestServiceRegistryOwnsStoredState` killed it. Final atomic commit is rebuilt from qualified `main` with this reconciled plan; T-039A is complete only after that commit reaches `main` and repeated main CI passes.
+
+**T-039B — Transactional durable backend:** next. Introduce a schema/versioned transactional store for WebGate-owned service/device/release/audit/config metadata, with atomic migrations, restart/crash recovery, corruption/failure handling, backup/restore and tests proving runtime process PID/state is not resurrected as `RUNNING`. Do not duplicate SecureAcces-owned identity/session state. A simple JSON file is not sufficient evidence for DONE.
 
 ### T-036 — Real destination-restricted loopback proxy + primary provider
 **Status:** TODO · **Priority:** P0.
@@ -248,20 +254,20 @@ Persist WebGate-owned service/device/release/audit/config metadata. Durable devi
 T-034 DONE → T-035 DONE
 T-043 DONE
 T-049 DONE → T-050 DONE → T-052(private provider + public bridge) → T-051 → T-038 convergence ─┐
-T-039 WebGate-owned durability ────────────────────────────────────────────────────────────────┼→ T-045
-T-035 → T-036 → T-037 ────────────────────────────────────────────────────────────────────────┤
-      ├→ T-040 ────────────────────────────────────────────────────────────────────────────────┤
-      ├→ T-041 ────────────────────────────────────────────────────────────────────────────────┤
-      └→ T-042 ────────────────────────────────────────────────────────────────────────────────┘
+T-039A ownership → T-039B durable backend ──────────────────────────────────────────────────────┼→ T-045
+T-035 → T-036 → T-037 ───────────────────────────────────────────────────────────────────────────┤
+      ├→ T-040 ───────────────────────────────────────────────────────────────────────────────────┤
+      ├→ T-041 ───────────────────────────────────────────────────────────────────────────────────┤
+      └→ T-042 ───────────────────────────────────────────────────────────────────────────────────┘
 T-044 must land before T-045 final qualification.
 T-048 is independent High/P1 work.
 T-045 → T-046 → T-047.
 ```
 
 Priority now:
-1. **T-052 private half** — restore executable SecureAcces CI, qualify/promote private durable sidecar, exercise public/private protocol, prove backup/restore.
-2. **T-051** admin authority using the same real provider.
-3. **T-039** WebGate-owned durability and AccountID migration.
+1. **T-039B** while SecureAcces private CI is externally blocked — transactional WebGate-owned persistence/recovery.
+2. **T-052 private half** immediately when executable SecureAcces CI is available — qualify/promote durable sidecar, protocol integration, backup/restore.
+3. **T-051** admin authority using the same real provider.
 4. **T-036/T-037** transport + no-public-IP core.
 5. **T-040/T-041** key/browser boundaries.
 6. **T-044/T-042/T-048** feedback/resilience/config.
@@ -307,6 +313,18 @@ Device without AccountID → deny before authority I/O
 child process environment → no WEBGATE_AUTHORITY_TOKEN / WEBGATE_ADMIN_TOKEN
 ```
 
+Permanent T-039 ownership negatives:
+
+```text
+mutate object after Register/Enroll/AddDraft → registry unchanged
+mutate Get/Resolve/List/GetLatestPromoted result → registry unchanged
+mutate returned DeviceChallenge payload → stored PoP challenge unchanged
+mutate nested ExecArgs/artifact slices → registry unchanged
+process start/stop/restart → explicit registry runtime mutation, config Version unchanged
+Telegram /bind → authoritative registry mutation, not snapshot mutation
+internal-pointer mutant → killed
+```
+
 T-052/T-051 matrix:
 
 ```text
@@ -345,28 +363,29 @@ Historical Iterations 1–9 remain in Git history.
 - **Iteration 12 / T-043:** SSRF/upstream containment; final `82635a87693c5c34921e5d2be48b92fc7e15ec29` — PASS.
 - **Iteration 13A / T-049:** dependency/toolchain foundation; final `e6e87c3bb3dd54a5d6fde429d71d2d33dc187809` — repeated main CI PASS.
 - **Iteration 13B / T-050:** fail-closed data-plane authority boundary; final `2805999a3b59472cbbb02156aefee99689b3cf60` — repeated main CI PASS.
-- **Iteration 13C / T-052 public half:** F-042/F-043 discovered. RED `4113b68e...`; first green `37139e07...` rejected; green2 `16052095...` PASS; adversarial extension `cd856403...` PASS. Final atomic commit SELF must be rebuilt from qualified main with this reconciled plan and requalified before promotion.
-- **Iteration 13D / T-052 private half:** SecureAcces RED `c0a0f82c...`; private sidecar green candidate `b1d41238...`; qualification BLOCKED because all GitHub Actions jobs terminate pre-step with no logs, including one diagnostic rerun. Private main remains `827abb1add11a9fcbd0a9944e65efbd20c675739`.
+- **Iteration 13C / T-052 public half:** F-042/F-043 discovered. RED `4113b68e...`; rejected green `37139e07...`; green2 `16052095...` PASS; adversarial `cd856403...` PASS; final/main `e7dc960722cffc68b778bb35cab449af096f8273` — repeated main CI PASS.
+- **Iteration 13D / T-052 private half:** SecureAcces RED `c0a0f82c...`; private sidecar green candidate `b1d41238...`; qualification BLOCKED because GitHub Actions jobs terminate pre-step with no logs, including controlled diagnostic reruns. Private main remains `827abb1add11a9fcbd0a9944e65efbd20c675739`.
+- **Iteration 14 / T-039A:** F-044 discovered. Invalid first RED `26a2aab6...` rejected because its fixture did not compile; corrected RED `fb84310a8473522dd932219bb8e0b312914f2015` failed only on observed service/device aliasing. Green `1b06e56c3808ca85c7866d379dcbafa6d14f1b66` full CI PASS. Internal-pointer mutant `7afc1e4cceb5e4d9ce7a1960d84ed4d88470a7ab` killed by ownership test after gofmt/vet PASS. Final atomic SELF pending branch/main qualification.
 
 ---
 
 # 11. Context checkpoint
 
 ```text
-WEBGATE QUALIFIED MAIN: 2805999a3b59472cbbb02156aefee99689b3cf60
+WEBGATE QUALIFIED MAIN: e7dc960722cffc68b778bb35cab449af096f8273
 SECUREACCES QUALIFIED/UNCHANGED MAIN: 827abb1add11a9fcbd0a9944e65efbd20c675739
 
 CURRENT MILESTONE:
-- T-050 complete in WebGate main
-- T-052 public remote-authority bridge qualified on work branch
+- T-052 public remote-authority bridge complete in WebGate main
 - T-052 private durable provider implemented on work branch but CI-infrastructure blocked
+- T-039A ownership-boundary green + mutant evidence complete; final atomic promotion pending
 
-TARGET AUTH:
-public WebGate gateway
-  → loopback-only RemoteServiceAuthorizer
-  → private webgate-authority sidecar
-  → SecureAcces Service
-  → durable Axiom/Pebble Store
+TARGET DURABILITY BOUNDARY:
+callers
+  → detached registry snapshots
+  → explicit locked mutation APIs
+  → T-039B transactional durable store
+  → restart/crash/recovery/backup evidence
 
 NEW IDENTITY RULE:
 Device.AccountID = global SecureAcces AccountID
@@ -379,18 +398,19 @@ F-031 real Servo/proxied runtime
 F-032 platform key store
 F-033 real SecureAcces authority → T-052
 F-034 Origin reverse connectivity
-F-035 durability
+F-035 durability → T-039/T-052
 F-036 admin authority → T-051
 F-038 race/mutation CI depth
 F-039 runtime config false-success
 F-041 private/durable SecureAcces deployment → T-052
 F-042 durable AccountID migration → T-052/T-039
+F-044 durable registry transaction boundary → T-039B
 
 NEXT:
-1) promote final atomic public T-052 half only after branch + main CI
-2) restore/observe executable SecureAcces private CI; no retry-until-green
-3) qualify/promote private sidecar and backup/restore
-4) T-051 admin management authority
+1) promote final atomic T-039A only after branch + main CI
+2) T-039B transactional durable backend + migration/recovery/backup tests
+3) recheck SecureAcces private CI when external runner state changes; no retry-until-green
+4) qualify/promote private sidecar, then T-051
 
 IMPORTANT DECISIONS:
 - incomplete provider = unavailable/offline
@@ -402,6 +422,9 @@ IMPORTANT DECISIONS:
 - private SecureAcces source is not silently published
 - memory SecureAcces Store is test/dev only
 - child services do not inherit WebGate authority/admin tokens
+- registries never expose mutable internal state
+- process runtime state does not increment durable config Version
+- do not resurrect persisted PID/state as RUNNING after restart
 - no force push
 ```
 

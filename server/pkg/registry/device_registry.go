@@ -39,28 +39,30 @@ func NewDeviceRegistry() *DeviceRegistry {
 }
 
 // Enroll registers a new device in PENDING status after validating the public
-// identity material required for proof-of-possession.
+// identity material required for proof-of-possession. The registry owns an
+// isolated copy so the caller cannot mutate identity or lifecycle state later.
 func (r *DeviceRegistry) Enroll(dev *domain.Device) error {
-	if dev == nil || strings.TrimSpace(dev.ID) == "" || strings.TrimSpace(dev.UserID) == "" {
+	candidate := cloneDevice(dev)
+	if candidate == nil || strings.TrimSpace(candidate.ID) == "" || strings.TrimSpace(candidate.UserID) == "" {
 		return ErrInvalidDeviceIdentity
 	}
-	if err := validateDevicePublicKey(dev); err != nil {
+	if err := validateDevicePublicKey(candidate); err != nil {
 		return err
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, exists := r.devices[dev.ID]; exists {
+	if _, exists := r.devices[candidate.ID]; exists {
 		return ErrDeviceAlreadyExists
 	}
 
 	now := time.Now().UTC()
-	dev.Status = domain.DeviceStatusPending
-	dev.CreatedAt = now
-	dev.LastSeenAt = now
+	candidate.Status = domain.DeviceStatusPending
+	candidate.CreatedAt = now
+	candidate.LastSeenAt = now
 
-	r.devices[dev.ID] = dev
+	r.devices[candidate.ID] = candidate
 	return nil
 }
 
@@ -98,8 +100,8 @@ func (r *DeviceRegistry) CreateChallenge(deviceID string, ttl time.Duration) (*d
 	}
 	challenge.SigningPayload = string(payload)
 
-	r.challenges[challenge.ChallengeID] = challenge
-	return challenge, nil
+	r.challenges[challenge.ChallengeID] = cloneDeviceChallenge(challenge)
+	return cloneDeviceChallenge(challenge), nil
 }
 
 // ChallengeSigningPayload returns the canonical WebGate v1 proof-of-possession
@@ -188,7 +190,7 @@ func decodeEd25519PublicKey(dev *domain.Device) (ed25519.PublicKey, error) {
 	return ed25519.PublicKey(pub), nil
 }
 
-// GetDevice returns device by ID.
+// GetDevice returns a detached snapshot of a device by ID.
 func (r *DeviceRegistry) GetDevice(id string) (*domain.Device, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -197,7 +199,7 @@ func (r *DeviceRegistry) GetDevice(id string) (*domain.Device, error) {
 	if !ok {
 		return nil, ErrDeviceNotFound
 	}
-	return dev, nil
+	return cloneDevice(dev), nil
 }
 
 // RevokeDevice immediately revokes access for a device.
@@ -232,14 +234,30 @@ func (r *DeviceRegistry) UpdateStatus(id string, status domain.DeviceStatus) err
 	return nil
 }
 
-// List returns all registered devices.
+// List returns detached snapshots of all registered devices.
 func (r *DeviceRegistry) List() []*domain.Device {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	list := make([]*domain.Device, 0, len(r.devices))
 	for _, dev := range r.devices {
-		list = append(list, dev)
+		list = append(list, cloneDevice(dev))
 	}
 	return list
+}
+
+func cloneDevice(dev *domain.Device) *domain.Device {
+	if dev == nil {
+		return nil
+	}
+	clone := *dev
+	return &clone
+}
+
+func cloneDeviceChallenge(challenge *domain.DeviceChallenge) *domain.DeviceChallenge {
+	if challenge == nil {
+		return nil
+	}
+	clone := *challenge
+	return &clone
 }

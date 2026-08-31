@@ -111,10 +111,7 @@ func (pm *ProcessManager) StartService(serviceID string) (*ProcessInstance, erro
 			cmd.Dir = svc.WorkingDir
 		}
 		if err := cmd.Start(); err != nil {
-			svc.ProcessState = domain.ProcessStateStopped
-			svc.ProcessPID = 0
-			svc.StartedAt = nil
-			svc.UpdatedAt = now
+			_ = pm.services.UpdateProcessRuntime(serviceID, domain.ProcessStateStopped, 0, nil)
 			pm.appendLogLocked(serviceID, "Ошибка запуска процесса: "+err.Error())
 			return nil, fmt.Errorf("failed to start service process: %w", err)
 		}
@@ -132,16 +129,16 @@ func (pm *ProcessManager) StartService(serviceID string) (*ProcessInstance, erro
 		cmd:            cmd,
 	}
 
+	if err := pm.services.UpdateProcessRuntime(serviceID, domain.ProcessStateRunning, pid, &now); err != nil {
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		pm.appendLogLocked(serviceID, "Не удалось зафиксировать состояние запущенного процесса: "+err.Error())
+		return nil, fmt.Errorf("failed to record service runtime state: %w", err)
+	}
+
 	pm.processes[serviceID] = inst
 	pm.appendLogLocked(serviceID, fmt.Sprintf("Процесс запущен на порту %d (PID %d)", svc.Port, pid))
-
-	svc.ProcessState = domain.ProcessStateRunning
-	svc.ProcessPID = pid
-	svc.StartedAt = &now
-	if svc.Port > 0 && strings.TrimSpace(svc.UpstreamURL) == "" {
-		svc.UpstreamURL = fmt.Sprintf("http://127.0.0.1:%d", svc.Port)
-	}
-	svc.UpdatedAt = now
 
 	if cmd != nil {
 		go pm.waitForProcess(serviceID, pid, cmd)
@@ -185,11 +182,7 @@ func (pm *ProcessManager) waitForProcess(serviceID string, pid int, cmd *exec.Cm
 		}
 		inst.State = string(state)
 		inst.PID = 0
-		if svc, err := pm.services.GetByID(serviceID); err == nil {
-			svc.ProcessState = state
-			svc.ProcessPID = 0
-			svc.UpdatedAt = time.Now().UTC()
-		}
+		_ = pm.services.UpdateProcessRuntime(serviceID, state, 0, nil)
 		pm.appendLogLocked(serviceID, fmt.Sprintf("Процесс завершился (PID %d, exit=%d)", pid, exitCode))
 	}
 	hook := pm.onExitHook
@@ -215,14 +208,10 @@ func (pm *ProcessManager) StopService(serviceID string) error {
 
 	inst.State = string(domain.ProcessStateStopped)
 	inst.PID = 0
-	pm.appendLogLocked(serviceID, "Процесс остановлен оператором")
-
-	svc, err := pm.services.GetByID(serviceID)
-	if err == nil {
-		svc.ProcessState = domain.ProcessStateStopped
-		svc.ProcessPID = 0
-		svc.UpdatedAt = time.Now().UTC()
+	if err := pm.services.UpdateProcessRuntime(serviceID, domain.ProcessStateStopped, 0, nil); err != nil {
+		return fmt.Errorf("failed to record stopped service runtime state: %w", err)
 	}
+	pm.appendLogLocked(serviceID, "Процесс остановлен оператором")
 
 	return nil
 }
