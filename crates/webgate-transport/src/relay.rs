@@ -46,18 +46,12 @@ impl SecureRelayTransport {
         }
     }
 
-    /// Attempts to start the transport tunnel.
-    ///
-    /// Until a real relay backend owns and verifies the configured listener/tunnel,
-    /// configuration must not be promoted to `Ready`.
     pub fn start_tunnel(&mut self) -> Result<LocalProxyEndpoint, &'static str> {
         self.state = TransportState::Offline;
         self.last_ping_latency_ms = None;
         Err("secure relay transport backend is not implemented")
     }
 
-    /// Returns the last real probe latency when a backend has supplied one.
-    /// No synthetic zero-latency success is generated.
     #[must_use]
     pub fn last_probe_latency_ms(&self) -> Option<u64> {
         self.last_ping_latency_ms
@@ -84,11 +78,7 @@ impl TransportProvider for SecureRelayTransport {
     }
 
     fn local_proxy(&self) -> Option<LocalProxyEndpoint> {
-        if self.state == TransportState::Ready || self.state == TransportState::Degraded {
-            self.local_endpoint
-        } else {
-            None
-        }
+        self.local_endpoint
     }
 
     fn stop(&mut self) {
