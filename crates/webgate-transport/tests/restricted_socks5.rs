@@ -153,8 +153,10 @@ fn starts_only_after_sidecar_handshake_and_forwards_allowed_bytes() {
     assert_eq!(transport.local_proxy(), None);
 
     let endpoint = transport.start_proxy().unwrap();
+    let status = transport.status_handle().unwrap();
     assert_eq!(transport.state(), TransportState::Ready);
     assert_eq!(transport.local_proxy(), Some(endpoint));
+    assert_eq!(status.snapshot(), (TransportState::Ready, Some(endpoint)));
     assert!(endpoint.socket_addr().ip().is_loopback());
     assert_ne!(endpoint.socket_addr().port(), 0);
 
@@ -183,7 +185,39 @@ fn starts_only_after_sidecar_handshake_and_forwards_allowed_bytes() {
     transport.stop();
     assert_eq!(transport.state(), TransportState::Stopped);
     assert_eq!(transport.local_proxy(), None);
+    assert_eq!(status.snapshot(), (TransportState::Stopped, None));
     sidecar.join().unwrap();
+}
+
+#[test]
+fn live_status_revokes_endpoint_after_sidecar_failure() {
+    let (upstream, _observed, sidecar) = spawn_fake_sidecar(1);
+    let mut transport =
+        RestrictedSocks5Transport::new(config(upstream, vec!["docs.internal"], vec![443])).unwrap();
+    let endpoint = transport.start_proxy().unwrap();
+    let status = transport.status_handle().unwrap();
+    sidecar.join().unwrap();
+
+    assert_eq!(status.snapshot(), (TransportState::Ready, Some(endpoint)));
+
+    let mut client = TcpStream::connect(endpoint.socket_addr()).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    socks5_greeting(&mut client);
+    assert_eq!(
+        request_domain(&mut client, 0x01, "docs.internal", 443),
+        0x01
+    );
+
+    for _ in 0..20 {
+        if status.snapshot().0 == TransportState::Offline {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(status.snapshot(), (TransportState::Offline, None));
+    transport.stop();
 }
 
 #[test]
