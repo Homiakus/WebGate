@@ -15,27 +15,66 @@ import (
 )
 
 var (
-	ErrDeviceNotFound          = errors.New("device not found")
-	ErrDeviceAlreadyExists     = errors.New("device with this ID already registered")
-	ErrChallengeExpired        = errors.New("device challenge has expired")
-	ErrInvalidSignature        = errors.New("proof of possession signature invalid")
-	ErrInvalidDeviceIdentity   = errors.New("device ID and user ID are required")
-	ErrInvalidPublicKey        = errors.New("device public key is invalid")
-	ErrUnsupportedKeyAlgorithm = errors.New("device key algorithm is not supported")
-	ErrActivationRequiresProof = errors.New("device activation requires cryptographic proof of possession")
+	ErrDeviceNotFound               = errors.New("device not found")
+	ErrDeviceAlreadyExists          = errors.New("device with this ID already registered")
+	ErrChallengeExpired             = errors.New("device challenge has expired")
+	ErrInvalidSignature             = errors.New("proof of possession signature invalid")
+	ErrInvalidDeviceIdentity        = errors.New("device ID and user ID are required")
+	ErrInvalidPublicKey             = errors.New("device public key is invalid")
+	ErrUnsupportedKeyAlgorithm      = errors.New("device key algorithm is not supported")
+	ErrActivationRequiresProof      = errors.New("device activation requires cryptographic proof of possession")
+	ErrDurableDeviceAccountRequired = errors.New("durable device identity requires SecureAcces account ID")
 )
 
+type DevicePersistence interface {
+	SaveDevice(*domain.Device) error
+}
+
 type DeviceRegistry struct {
-	mu         sync.RWMutex
-	devices    map[string]*domain.Device
-	challenges map[string]*domain.DeviceChallenge
+	mu          sync.RWMutex
+	devices     map[string]*domain.Device
+	challenges  map[string]*domain.DeviceChallenge
+	persistence DevicePersistence
 }
 
 func NewDeviceRegistry() *DeviceRegistry {
+	return NewDeviceRegistryWithPersistence(nil)
+}
+
+func NewDeviceRegistryWithPersistence(persistence DevicePersistence) *DeviceRegistry {
 	return &DeviceRegistry{
-		devices:    make(map[string]*domain.Device),
-		challenges: make(map[string]*domain.DeviceChallenge),
+		devices:     make(map[string]*domain.Device),
+		challenges:  make(map[string]*domain.DeviceChallenge),
+		persistence: persistence,
 	}
+}
+
+// Restore atomically replaces durable device state. Proof-of-possession
+// challenges are intentionally process-local and are never restored.
+func (r *DeviceRegistry) Restore(devices []*domain.Device) error {
+	restored := make(map[string]*domain.Device, len(devices))
+	for _, dev := range devices {
+		candidate := cloneDevice(dev)
+		if err := validateDeviceIdentity(candidate); err != nil {
+			return err
+		}
+		if strings.TrimSpace(candidate.AccountID) == "" {
+			return ErrDurableDeviceAccountRequired
+		}
+		if err := validateDevicePublicKey(candidate); err != nil {
+			return err
+		}
+		if _, exists := restored[candidate.ID]; exists {
+			return ErrDeviceAlreadyExists
+		}
+		restored[candidate.ID] = candidate
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.devices = restored
+	r.challenges = make(map[string]*domain.DeviceChallenge)
+	return nil
 }
 
 // Enroll registers a new device in PENDING status after validating the public
@@ -43,8 +82,11 @@ func NewDeviceRegistry() *DeviceRegistry {
 // isolated copy so the caller cannot mutate identity or lifecycle state later.
 func (r *DeviceRegistry) Enroll(dev *domain.Device) error {
 	candidate := cloneDevice(dev)
-	if candidate == nil || strings.TrimSpace(candidate.ID) == "" || strings.TrimSpace(candidate.UserID) == "" {
-		return ErrInvalidDeviceIdentity
+	if err := validateDeviceIdentity(candidate); err != nil {
+		return err
+	}
+	if r.persistence != nil && strings.TrimSpace(candidate.AccountID) == "" {
+		return ErrDurableDeviceAccountRequired
 	}
 	if err := validateDevicePublicKey(candidate); err != nil {
 		return err
@@ -61,6 +103,9 @@ func (r *DeviceRegistry) Enroll(dev *domain.Device) error {
 	candidate.Status = domain.DeviceStatusPending
 	candidate.CreatedAt = now
 	candidate.LastSeenAt = now
+	if err := r.saveDeviceLocked(candidate); err != nil {
+		return err
+	}
 
 	r.devices[candidate.ID] = candidate
 	return nil
@@ -169,8 +214,20 @@ func (r *DeviceRegistry) VerifyAndActivate(challengeID string, signatureHex stri
 		return ErrInvalidSignature
 	}
 
-	dev.Status = domain.DeviceStatusActive
-	dev.LastSeenAt = time.Now().UTC()
+	candidate := cloneDevice(dev)
+	candidate.Status = domain.DeviceStatusActive
+	candidate.LastSeenAt = time.Now().UTC()
+	if err := r.saveDeviceLocked(candidate); err != nil {
+		return err
+	}
+	r.devices[candidate.ID] = candidate
+	return nil
+}
+
+func validateDeviceIdentity(dev *domain.Device) error {
+	if dev == nil || strings.TrimSpace(dev.ID) == "" || strings.TrimSpace(dev.UserID) == "" {
+		return ErrInvalidDeviceIdentity
+	}
 	return nil
 }
 
@@ -211,8 +268,13 @@ func (r *DeviceRegistry) RevokeDevice(id string) error {
 	if !ok {
 		return ErrDeviceNotFound
 	}
-	dev.Status = domain.DeviceStatusRevoked
-	dev.LastSeenAt = time.Now().UTC()
+	candidate := cloneDevice(dev)
+	candidate.Status = domain.DeviceStatusRevoked
+	candidate.LastSeenAt = time.Now().UTC()
+	if err := r.saveDeviceLocked(candidate); err != nil {
+		return err
+	}
+	r.devices[id] = candidate
 	return nil
 }
 
@@ -229,8 +291,13 @@ func (r *DeviceRegistry) UpdateStatus(id string, status domain.DeviceStatus) err
 	if status == domain.DeviceStatusActive && dev.Status != domain.DeviceStatusActive {
 		return ErrActivationRequiresProof
 	}
-	dev.Status = status
-	dev.LastSeenAt = time.Now().UTC()
+	candidate := cloneDevice(dev)
+	candidate.Status = status
+	candidate.LastSeenAt = time.Now().UTC()
+	if err := r.saveDeviceLocked(candidate); err != nil {
+		return err
+	}
+	r.devices[id] = candidate
 	return nil
 }
 
@@ -244,6 +311,13 @@ func (r *DeviceRegistry) List() []*domain.Device {
 		list = append(list, cloneDevice(dev))
 	}
 	return list
+}
+
+func (r *DeviceRegistry) saveDeviceLocked(dev *domain.Device) error {
+	if r.persistence == nil {
+		return nil
+	}
+	return r.persistence.SaveDevice(cloneDevice(dev))
 }
 
 func cloneDevice(dev *domain.Device) *domain.Device {

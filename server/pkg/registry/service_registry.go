@@ -16,24 +16,65 @@ var (
 	ErrServiceInactive      = errors.New("service is inactive or disabled")
 )
 
+type ServicePersistence interface {
+	SaveService(*domain.ProtectedService) error
+	DeleteService(string) error
+}
+
 type ServiceRegistry struct {
-	mu     sync.RWMutex
-	byID   map[string]*domain.ProtectedService
-	bySlug map[string]*domain.ProtectedService
+	mu          sync.RWMutex
+	byID        map[string]*domain.ProtectedService
+	bySlug      map[string]*domain.ProtectedService
+	persistence ServicePersistence
 }
 
 func NewServiceRegistry() *ServiceRegistry {
+	return NewServiceRegistryWithPersistence(nil)
+}
+
+func NewServiceRegistryWithPersistence(persistence ServicePersistence) *ServiceRegistry {
 	return &ServiceRegistry{
-		byID:   make(map[string]*domain.ProtectedService),
-		bySlug: make(map[string]*domain.ProtectedService),
+		byID:        make(map[string]*domain.ProtectedService),
+		bySlug:      make(map[string]*domain.ProtectedService),
+		persistence: persistence,
 	}
+}
+
+// Restore atomically replaces the registry with durable snapshots. Runtime
+// process state is never resurrected across a server restart.
+func (r *ServiceRegistry) Restore(services []*domain.ProtectedService) error {
+	byID := make(map[string]*domain.ProtectedService, len(services))
+	bySlug := make(map[string]*domain.ProtectedService, len(services))
+	for _, svc := range services {
+		candidate := durableServiceSnapshot(svc)
+		if candidate == nil {
+			return fmt.Errorf("validation error: %w", domain.ErrInvalidServiceID)
+		}
+		if err := candidate.Validate(); err != nil {
+			return fmt.Errorf("validation error: %w", err)
+		}
+		if _, exists := byID[candidate.ID]; exists {
+			return ErrServiceAlreadyExists
+		}
+		if _, exists := bySlug[candidate.Slug]; exists {
+			return ErrSlugCollision
+		}
+		byID[candidate.ID] = candidate
+		bySlug[candidate.Slug] = candidate
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byID = byID
+	r.bySlug = bySlug
+	return nil
 }
 
 // Register adds a new validated ProtectedService to the registry. The registry
 // owns an isolated copy so callers cannot mutate registered state outside the
 // lock/validation/versioning boundary.
 func (r *ServiceRegistry) Register(svc *domain.ProtectedService) error {
-	candidate := cloneProtectedService(svc)
+	candidate := durableServiceSnapshot(svc)
 	if candidate == nil {
 		return fmt.Errorf("validation error: %w", domain.ErrInvalidServiceID)
 	}
@@ -55,6 +96,9 @@ func (r *ServiceRegistry) Register(svc *domain.ProtectedService) error {
 	candidate.CreatedAt = now
 	candidate.UpdatedAt = now
 	candidate.Version = 1
+	if err := r.saveServiceLocked(candidate); err != nil {
+		return err
+	}
 
 	r.byID[candidate.ID] = candidate
 	r.bySlug[candidate.Slug] = candidate
@@ -106,10 +150,14 @@ func (r *ServiceRegistry) UpdateStatus(id string, status domain.ServiceStatus) e
 	if !ok {
 		return ErrServiceNotFound
 	}
-
-	svc.Status = status
-	svc.Version++
-	svc.UpdatedAt = time.Now().UTC()
+	candidate := cloneProtectedService(svc)
+	candidate.Status = status
+	candidate.Version++
+	candidate.UpdatedAt = time.Now().UTC()
+	if err := r.saveServiceLocked(candidate); err != nil {
+		return err
+	}
+	r.replaceServiceLocked(svc, candidate)
 	return nil
 }
 
@@ -127,10 +175,14 @@ func (r *ServiceRegistry) UpdateRoute(id string, upstreamURL string) error {
 	if !ok {
 		return ErrServiceNotFound
 	}
-
-	svc.UpstreamURL = canonicalUpstream
-	svc.Version++
-	svc.UpdatedAt = time.Now().UTC()
+	candidate := cloneProtectedService(svc)
+	candidate.UpstreamURL = canonicalUpstream
+	candidate.Version++
+	candidate.UpdatedAt = time.Now().UTC()
+	if err := r.saveServiceLocked(candidate); err != nil {
+		return err
+	}
+	r.replaceServiceLocked(svc, candidate)
 	return nil
 }
 
@@ -143,23 +195,27 @@ func (r *ServiceRegistry) UpdateExecutable(id string, port int, execPath string,
 	if !ok {
 		return ErrServiceNotFound
 	}
-
-	svc.Port = port
-	svc.ExecutablePath = execPath
+	candidate := cloneProtectedService(svc)
+	candidate.Port = port
+	candidate.ExecutablePath = execPath
 	if len(execArgs) > 0 {
-		svc.ExecArgs = append([]string(nil), execArgs...)
+		candidate.ExecArgs = append([]string(nil), execArgs...)
 	}
 	if port > 0 {
-		svc.UpstreamURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+		candidate.UpstreamURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	}
-	svc.Version++
-	svc.UpdatedAt = time.Now().UTC()
+	candidate.Version++
+	candidate.UpdatedAt = time.Now().UTC()
+	if err := r.saveServiceLocked(candidate); err != nil {
+		return err
+	}
+	r.replaceServiceLocked(svc, candidate)
 	return nil
 }
 
 // UpdateProcessRuntime records process-manager-owned runtime state through the
-// registry lock. Runtime PID/state changes intentionally do not increment the
-// durable configuration Version.
+// registry lock. Runtime PID/state changes intentionally do not increment or
+// write durable configuration state.
 func (r *ServiceRegistry) UpdateProcessRuntime(id string, state domain.ProcessState, pid int, startedAt *time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -181,7 +237,7 @@ func (r *ServiceRegistry) UpdateProcessRuntime(id string, state domain.ProcessSt
 	return nil
 }
 
-// Unregister removes a service from the registry.
+// Unregister removes a service from the registry only after durable deletion succeeds.
 func (r *ServiceRegistry) Unregister(id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -189,6 +245,11 @@ func (r *ServiceRegistry) Unregister(id string) error {
 	svc, ok := r.byID[id]
 	if !ok {
 		return ErrServiceNotFound
+	}
+	if r.persistence != nil {
+		if err := r.persistence.DeleteService(id); err != nil {
+			return err
+		}
 	}
 
 	delete(r.byID, id)
@@ -205,31 +266,60 @@ func (r *ServiceRegistry) UpdateFull(id, name, slug, description string, port in
 	if !ok {
 		return ErrServiceNotFound
 	}
-
 	if slug != svc.Slug {
 		if _, exists := r.bySlug[slug]; exists {
 			return ErrSlugCollision
 		}
-		delete(r.bySlug, svc.Slug)
-		svc.Slug = slug
-		r.bySlug[slug] = svc
 	}
 
-	svc.Name = name
-	svc.Description = description
-	svc.Port = port
-	svc.ExecutablePath = execPath
-	svc.ExecArgs = append([]string(nil), execArgs...)
-	svc.WorkingDir = workingDir
-	svc.AutoStart = autoStart
-
+	candidate := cloneProtectedService(svc)
+	candidate.Name = name
+	candidate.Slug = slug
+	candidate.Description = description
+	candidate.Port = port
+	candidate.ExecutablePath = execPath
+	candidate.ExecArgs = append([]string(nil), execArgs...)
+	candidate.WorkingDir = workingDir
+	candidate.AutoStart = autoStart
 	if port > 0 {
-		svc.UpstreamURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+		candidate.UpstreamURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	}
-
-	svc.Version++
-	svc.UpdatedAt = time.Now().UTC()
+	candidate.Version++
+	candidate.UpdatedAt = time.Now().UTC()
+	if err := candidate.Validate(); err != nil {
+		return fmt.Errorf("validation error: %w", err)
+	}
+	if err := r.saveServiceLocked(candidate); err != nil {
+		return err
+	}
+	r.replaceServiceLocked(svc, candidate)
 	return nil
+}
+
+func (r *ServiceRegistry) saveServiceLocked(svc *domain.ProtectedService) error {
+	if r.persistence == nil {
+		return nil
+	}
+	return r.persistence.SaveService(durableServiceSnapshot(svc))
+}
+
+func (r *ServiceRegistry) replaceServiceLocked(previous, candidate *domain.ProtectedService) {
+	if previous.Slug != candidate.Slug {
+		delete(r.bySlug, previous.Slug)
+	}
+	r.byID[candidate.ID] = candidate
+	r.bySlug[candidate.Slug] = candidate
+}
+
+func durableServiceSnapshot(svc *domain.ProtectedService) *domain.ProtectedService {
+	clone := cloneProtectedService(svc)
+	if clone == nil {
+		return nil
+	}
+	clone.ProcessState = domain.ProcessStateStopped
+	clone.ProcessPID = 0
+	clone.StartedAt = nil
+	return clone
 }
 
 func cloneProtectedService(svc *domain.ProtectedService) *domain.ProtectedService {
