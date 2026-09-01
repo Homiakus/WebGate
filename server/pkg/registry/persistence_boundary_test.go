@@ -1,6 +1,9 @@
 package registry_test
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"testing"
 	"time"
@@ -49,6 +52,23 @@ func (p *releasePersistenceProbe) SaveRelease(*domain.Release) error {
 		return errInjectedPersistence
 	}
 	return nil
+}
+
+func validPersistenceDevice(t *testing.T, id, userID string) *domain.Device {
+	t.Helper()
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate device key: %v", err)
+	}
+	return &domain.Device{
+		ID:           id,
+		AccountID:    "account-" + id,
+		UserID:       userID,
+		PublicKeyHex: hex.EncodeToString(publicKey),
+		Algorithm:    "Ed25519",
+		Platform:     domain.PlatformLinux,
+		Architecture: domain.ArchX86_64,
+	}
 }
 
 func TestServicePersistenceFailureNeverCommitsMemory(t *testing.T) {
@@ -109,14 +129,14 @@ func TestServiceRestoreNeverResurrectsRunningProcess(t *testing.T) {
 	reg := registry.NewServiceRegistryWithPersistence(&servicePersistenceProbe{})
 	started := time.Now().UTC().Add(-time.Minute)
 	persisted := &domain.ProtectedService{
-		ID:          "svc-restart",
-		TenantID:    "tenant-1",
-		WorkspaceID: "workspace-1",
-		Name:        "Restart",
-		Slug:        "restart",
-		UpstreamURL: "http://127.0.0.1:8092",
-		Status:      domain.ServiceStatusActive,
-		Version:     7,
+		ID:           "svc-restart",
+		TenantID:     "tenant-1",
+		WorkspaceID:  "workspace-1",
+		Name:         "Restart",
+		Slug:         "restart",
+		UpstreamURL:  "http://127.0.0.1:8092",
+		Status:       domain.ServiceStatusActive,
+		Version:      7,
 		ProcessState: domain.ProcessStateRunning,
 		ProcessPID:   9999,
 		StartedAt:    &started,
@@ -139,7 +159,7 @@ func TestServiceRestoreNeverResurrectsRunningProcess(t *testing.T) {
 func TestDeviceAndReleasePersistenceFailureNeverCommitsMemory(t *testing.T) {
 	devProbe := &devicePersistenceProbe{failAt: 1}
 	devReg := registry.NewDeviceRegistryWithPersistence(devProbe)
-	dev := newValidDevice(t, "device-durable", "user-durable")
+	dev := validPersistenceDevice(t, "device-durable", "user-durable")
 	if err := devReg.Enroll(dev); !errors.Is(err, errInjectedPersistence) {
 		t.Fatalf("Enroll error = %v, want injected persistence failure", err)
 	}
