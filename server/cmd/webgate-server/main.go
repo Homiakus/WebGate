@@ -94,6 +94,7 @@ func main() {
 		serverCfg = loaded
 		log.Printf("[Конфиг] Успешно загружен профиль: '%s'", serverCfg.ServerName)
 	}
+	config.ApplyRuntimeSecrets(serverCfg, os.LookupEnv)
 
 	if err := config.HardenRuntimeAddresses(serverCfg); err != nil {
 		log.Fatalf("[Безопасность] Небезопасная конфигурация listener: %v", err)
