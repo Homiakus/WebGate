@@ -17,23 +17,39 @@ import (
 	"github.com/Homiakus/WebGate/server/pkg/delivery"
 	"github.com/Homiakus/WebGate/server/pkg/domain"
 	"github.com/Homiakus/WebGate/server/pkg/gateway"
+	"github.com/Homiakus/WebGate/server/pkg/persistence"
 	"github.com/Homiakus/WebGate/server/pkg/registry"
 )
 
-const defaultAuthorityEndpoint = "http://127.0.0.1:8790"
+const (
+	defaultAuthorityEndpoint = "http://127.0.0.1:8790"
+	defaultStateDBPath       = "data/webgate-state.db"
+)
 
 func main() {
 	configPath := flag.String("config", "", "Path to server configuration file (.toml / .json)")
 	flag.StringVar(configPath, "c", "", "Path to server configuration file (shorthand)")
+	stateDBPath := flag.String("state-db", stateDBPathFromEnvironment(), "Path to durable WebGate SQLite state")
+	flag.StringVar(stateDBPath, "state", stateDBPathFromEnvironment(), "Path to durable WebGate SQLite state (shorthand)")
 	flag.Parse()
 
 	log.Println("───────────────────────────────────────────────────────────────────────────")
 	log.Println(" 01 / WEBGATE СЕРВЕРНЫЙ ШЛЮЗ И ПАНЕЛЬ УПРАВЛЕНИЯ")
 	log.Println("───────────────────────────────────────────────────────────────────────────")
 
-	svcReg := registry.NewServiceRegistry()
-	devReg := registry.NewDeviceRegistry()
-	relReg := registry.NewReleaseRegistry()
+	stateStore, err := persistence.OpenSQLiteRegistryStore(*stateDBPath)
+	if err != nil {
+		log.Fatalf("[Состояние] Не удалось открыть durable state %s: %v", *stateDBPath, err)
+	}
+	defer stateStore.Close()
+
+	svcReg := registry.NewServiceRegistryWithPersistence(stateStore)
+	devReg := registry.NewDeviceRegistryWithPersistence(stateStore)
+	relReg := registry.NewReleaseRegistryWithPersistence(stateStore)
+	if err := restoreDurableRegistries(stateStore, svcReg, devReg, relReg); err != nil {
+		log.Fatalf("[Состояние] Durable state поврежден или несовместим: %v", err)
+	}
+	log.Printf("[Состояние] Восстановлено: services=%d devices=%d releases=%d", len(svcReg.List()), len(devReg.List()), len(relReg.List()))
 
 	serverCfg := config.DefaultServerConfig()
 	if *configPath != "" {
@@ -52,11 +68,15 @@ func main() {
 	if err := serverCfg.ApplyToRegistries(svcReg); err != nil {
 		log.Fatalf("[Конфиг] Не удалось применить реестр сервисов: %v", err)
 	}
+	if err := ensureConfiguredServicesPresent(serverCfg, svcReg); err != nil {
+		log.Fatalf("[Конфиг] Конфигурация не зафиксирована в durable registry: %v", err)
+	}
 
 	// No synthetic production devices are seeded here. Every real device must be
 	// enrolled with a valid public key and activated through proof-of-possession.
 
-	// Release registry starts empty. Only verified build pipeline outputs may be promoted.
+	// Release registry starts empty unless a previously qualified release was
+	// restored from durable state. Only verified build pipeline outputs may be promoted.
 
 	delSvc := delivery.NewTelegramDeliveryService(relReg)
 	// The historical admin prototype still carries an unused legacy-authorizer
@@ -118,6 +138,52 @@ func main() {
 	if serveErr := <-errCh; serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 		log.Fatalf("WebGate server error: %v", serveErr)
 	}
+}
+
+func stateDBPathFromEnvironment() string {
+	if configured := strings.TrimSpace(os.Getenv("WEBGATE_STATE_DB")); configured != "" {
+		return configured
+	}
+	return defaultStateDBPath
+}
+
+func restoreDurableRegistries(
+	store *persistence.SQLiteRegistryStore,
+	services *registry.ServiceRegistry,
+	devices *registry.DeviceRegistry,
+	releases *registry.ReleaseRegistry,
+) error {
+	persistedServices, err := store.LoadServices()
+	if err != nil {
+		return err
+	}
+	persistedDevices, err := store.LoadDevices()
+	if err != nil {
+		return err
+	}
+	persistedReleases, err := store.LoadReleases()
+	if err != nil {
+		return err
+	}
+	if err := services.Restore(persistedServices); err != nil {
+		return fmt.Errorf("restore services: %w", err)
+	}
+	if err := devices.Restore(persistedDevices); err != nil {
+		return fmt.Errorf("restore devices: %w", err)
+	}
+	if err := releases.Restore(persistedReleases); err != nil {
+		return fmt.Errorf("restore releases: %w", err)
+	}
+	return nil
+}
+
+func ensureConfiguredServicesPresent(cfg *config.ServerConfig, services *registry.ServiceRegistry) error {
+	for _, configured := range cfg.Services {
+		if _, err := services.GetByID(configured.ID); err != nil {
+			return fmt.Errorf("service %q: %w", configured.ID, err)
+		}
+	}
+	return nil
 }
 
 func serviceAuthorizerFromEnvironment() (auth.ServiceAuthorizer, string, error) {

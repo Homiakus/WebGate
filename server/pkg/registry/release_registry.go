@@ -15,22 +15,52 @@ var (
 	ErrArtifactNotFound   = errors.New("no compatible artifact for target platform/architecture")
 )
 
+type ReleasePersistence interface {
+	SaveRelease(*domain.Release) error
+}
+
 type ReleaseRegistry struct {
-	mu       sync.RWMutex
-	releases map[string]*domain.Release
+	mu          sync.RWMutex
+	releases    map[string]*domain.Release
+	persistence ReleasePersistence
 }
 
 func NewReleaseRegistry() *ReleaseRegistry {
+	return NewReleaseRegistryWithPersistence(nil)
+}
+
+func NewReleaseRegistryWithPersistence(persistence ReleasePersistence) *ReleaseRegistry {
 	return &ReleaseRegistry{
-		releases: make(map[string]*domain.Release),
+		releases:    make(map[string]*domain.Release),
+		persistence: persistence,
 	}
+}
+
+// Restore atomically replaces durable release state without writing it again.
+func (r *ReleaseRegistry) Restore(releases []*domain.Release) error {
+	restored := make(map[string]*domain.Release, len(releases))
+	for _, rel := range releases {
+		candidate := cloneRelease(rel)
+		if candidate == nil || candidate.Version == "" {
+			return ErrInvalidStateChange
+		}
+		if _, exists := restored[candidate.Version]; exists {
+			return ErrReleaseExists
+		}
+		restored[candidate.Version] = candidate
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.releases = restored
+	return nil
 }
 
 // AddDraft creates a new draft release candidate and owns an isolated copy of
 // the release/artifact state.
 func (r *ReleaseRegistry) AddDraft(rel *domain.Release) error {
 	candidate := cloneRelease(rel)
-	if candidate == nil {
+	if candidate == nil || candidate.Version == "" {
 		return ErrInvalidStateChange
 	}
 
@@ -43,6 +73,9 @@ func (r *ReleaseRegistry) AddDraft(rel *domain.Release) error {
 
 	candidate.Status = domain.ReleaseStatusDraft
 	candidate.CreatedAt = time.Now().UTC()
+	if err := r.saveReleaseLocked(candidate); err != nil {
+		return err
+	}
 	r.releases[candidate.Version] = candidate
 	return nil
 }
@@ -59,8 +92,12 @@ func (r *ReleaseRegistry) Verify(version string) error {
 	if rel.Status != domain.ReleaseStatusDraft {
 		return ErrInvalidStateChange
 	}
-
-	rel.Status = domain.ReleaseStatusVerified
+	candidate := cloneRelease(rel)
+	candidate.Status = domain.ReleaseStatusVerified
+	if err := r.saveReleaseLocked(candidate); err != nil {
+		return err
+	}
+	r.releases[version] = candidate
 	return nil
 }
 
@@ -77,9 +114,14 @@ func (r *ReleaseRegistry) Promote(version string) error {
 		return ErrInvalidStateChange
 	}
 
+	candidate := cloneRelease(rel)
 	now := time.Now().UTC()
-	rel.Status = domain.ReleaseStatusPromoted
-	rel.PromotedAt = &now
+	candidate.Status = domain.ReleaseStatusPromoted
+	candidate.PromotedAt = &now
+	if err := r.saveReleaseLocked(candidate); err != nil {
+		return err
+	}
+	r.releases[version] = candidate
 	return nil
 }
 
@@ -92,8 +134,12 @@ func (r *ReleaseRegistry) Revoke(version string) error {
 	if !ok {
 		return ErrReleaseNotFound
 	}
-
-	rel.Status = domain.ReleaseStatusRevoked
+	candidate := cloneRelease(rel)
+	candidate.Status = domain.ReleaseStatusRevoked
+	if err := r.saveReleaseLocked(candidate); err != nil {
+		return err
+	}
+	r.releases[version] = candidate
 	return nil
 }
 
@@ -138,6 +184,13 @@ func (r *ReleaseRegistry) List() []*domain.Release {
 		list = append(list, cloneRelease(rel))
 	}
 	return list
+}
+
+func (r *ReleaseRegistry) saveReleaseLocked(rel *domain.Release) error {
+	if r.persistence == nil {
+		return nil
+	}
+	return r.persistence.SaveRelease(cloneRelease(rel))
 }
 
 func cloneRelease(rel *domain.Release) *domain.Release {
