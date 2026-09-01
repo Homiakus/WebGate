@@ -1,13 +1,12 @@
 package config
 
-// DurableServerConfig contains only WebGate-owned non-secret control-plane metadata.
-// Service definitions are owned by the durable service registry and runtime secrets
-// such as TelegramBotToken must be provided out of band on every process start.
+// DurableServerConfig contains only WebGate-owned control-plane metadata.
 type DurableServerConfig struct {
 	ServerName            string           `json:"server_name"`
 	ListenAddr            string           `json:"listen_addr"`
 	AdminAddr             string           `json:"admin_addr"`
 	ProxyTimeoutSecs      int              `json:"proxy_timeout_seconds"`
+	TelegramBotToken      string           `json:"telegram_bot_token,omitempty"`
 	TelegramBotEnabled    bool             `json:"telegram_bot_enabled"`
 	TelegramAdminChatIDs  []int64          `json:"telegram_admin_chat_ids,omitempty"`
 	TelegramAPIEndpoint   string           `json:"telegram_api_endpoint,omitempty"`
@@ -24,6 +23,7 @@ func DurableSnapshot(cfg *ServerConfig) *DurableServerConfig {
 		ListenAddr:            cfg.ListenAddr,
 		AdminAddr:             cfg.AdminAddr,
 		ProxyTimeoutSecs:      cfg.ProxyTimeoutSecs,
+		TelegramBotToken:      cfg.TelegramBotToken,
 		TelegramBotEnabled:    cfg.TelegramBotEnabled,
 		TelegramAdminChatIDs:  append([]int64(nil), cfg.TelegramAdminChatIDs...),
 		TelegramAPIEndpoint:   cfg.TelegramAPIEndpoint,
@@ -40,6 +40,7 @@ func ApplyDurableSnapshot(cfg *ServerConfig, durable *DurableServerConfig) {
 	cfg.ListenAddr = durable.ListenAddr
 	cfg.AdminAddr = durable.AdminAddr
 	cfg.ProxyTimeoutSecs = durable.ProxyTimeoutSecs
+	cfg.TelegramBotToken = durable.TelegramBotToken
 	cfg.TelegramBotEnabled = durable.TelegramBotEnabled
 	cfg.TelegramAdminChatIDs = append([]int64(nil), durable.TelegramAdminChatIDs...)
 	cfg.TelegramAPIEndpoint = durable.TelegramAPIEndpoint
@@ -61,8 +62,6 @@ func CloneServerConfig(cfg *ServerConfig) *ServerConfig {
 	return &clone
 }
 
-// RedactedCopy returns a detached API-safe view. Runtime secrets are never echoed
-// back by the control plane, even to an authenticated bootstrap administrator.
 func RedactedCopy(cfg *ServerConfig) *ServerConfig {
 	clone := CloneServerConfig(cfg)
 	if clone != nil {
