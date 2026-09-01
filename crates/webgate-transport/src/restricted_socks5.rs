@@ -167,6 +167,30 @@ fn decode_state(state: u8) -> TransportState {
     }
 }
 
+/// Read-only live view of a started restricted proxy.
+///
+/// The endpoint is published only while the provider's shared state still proves
+/// Ready/Degraded. A sidecar failure therefore invalidates status/UI decisions even
+/// though the loopback listener object may still exist while shutdown is pending.
+#[derive(Debug, Clone)]
+pub struct RestrictedProxyStatusHandle {
+    state: Arc<AtomicU8>,
+    endpoint: LocalProxyEndpoint,
+}
+
+impl RestrictedProxyStatusHandle {
+    #[must_use]
+    pub fn snapshot(&self) -> (TransportState, Option<LocalProxyEndpoint>) {
+        let state = decode_state(self.state.load(Ordering::Acquire));
+        let endpoint = if matches!(state, TransportState::Ready | TransportState::Degraded) {
+            Some(self.endpoint)
+        } else {
+            None
+        };
+        (state, endpoint)
+    }
+}
+
 pub struct RestrictedSocks5Transport {
     config: RestrictedSocks5Config,
     policy: DestinationPolicy,
@@ -297,6 +321,14 @@ impl RestrictedSocks5Transport {
         self.local_endpoint = Some(endpoint);
         self.set_state(TransportState::Ready);
         Ok(endpoint)
+    }
+
+    #[must_use]
+    pub fn status_handle(&self) -> Option<RestrictedProxyStatusHandle> {
+        self.local_endpoint.map(|endpoint| RestrictedProxyStatusHandle {
+            state: Arc::clone(&self.state),
+            endpoint,
+        })
     }
 
     fn literal_loopback_upstream(&self) -> Result<SocketAddr, RestrictedProxyError> {
