@@ -87,7 +87,7 @@ impl DestinationPolicy {
     }
 
     fn allows(&self, target: &SocksTarget, port: u16) -> bool {
-        if !self.allowed_ports.binary_search(&port).is_ok() {
+        if self.allowed_ports.binary_search(&port).is_err() {
             return false;
         }
 
@@ -97,9 +97,11 @@ impl DestinationPolicy {
                 let Some(host) = normalized else {
                     return false;
                 };
+                let domain_is_ip_literal = host.parse::<IpAddr>().is_ok();
                 self.allowed_domains.iter().any(|allowed| {
                     if let Some(suffix) = allowed.strip_prefix("*.") {
-                        host.len() > suffix.len() + 1
+                        !domain_is_ip_literal
+                            && host.len() > suffix.len() + 1
                             && host.ends_with(suffix)
                             && host.as_bytes().get(host.len() - suffix.len() - 1) == Some(&b'.')
                     } else {
@@ -109,7 +111,9 @@ impl DestinationPolicy {
             }
             SocksTarget::Ip(ip) => {
                 let target = ip.to_string().to_ascii_lowercase();
-                self.allowed_domains.iter().any(|allowed| allowed == &target)
+                self.allowed_domains
+                    .iter()
+                    .any(|allowed| allowed == &target)
             }
         }
     }
@@ -204,7 +208,10 @@ impl RestrictedSocks5Transport {
 
     pub fn start_proxy(&mut self) -> Result<LocalProxyEndpoint, RestrictedProxyError> {
         if self.listener_handle.is_some()
-            || matches!(self.state(), TransportState::Starting | TransportState::Ready)
+            || matches!(
+                self.state(),
+                TransportState::Starting | TransportState::Ready
+            )
         {
             return Err(RestrictedProxyError::AlreadyStarted);
         }
@@ -245,41 +252,41 @@ impl RestrictedSocks5Transport {
         let policy = self.policy.clone();
         let connect_timeout = self.config.connect_timeout;
 
-        let handle = thread::spawn(move || {
-            loop {
-                let accepted = listener.accept();
-                match accepted {
-                    Ok((stream, _)) => {
-                        if shutdown.load(Ordering::Acquire) {
-                            break;
-                        }
-                        let worker_shutdown = Arc::clone(&shutdown);
-                        let worker_state = Arc::clone(&state);
-                        let worker_policy = policy.clone();
-                        let worker = thread::spawn(move || {
-                            let _ = handle_client(
-                                stream,
-                                upstream,
-                                connect_timeout,
-                                &worker_policy,
-                                &worker_shutdown,
-                                &worker_state,
-                            );
-                        });
-                        match workers.lock() {
-                            Ok(mut handles) => handles.push(worker),
-                            Err(_) => {
-                                state.store(STATE_OFFLINE, Ordering::Release);
-                                break;
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        if !shutdown.load(Ordering::Acquire) {
-                            state.store(STATE_OFFLINE, Ordering::Release);
-                        }
+        let handle = thread::spawn(move || loop {
+            let accepted = listener.accept();
+            match accepted {
+                Ok((stream, _)) => {
+                    if shutdown.load(Ordering::Acquire) {
                         break;
                     }
+                    let worker_shutdown = Arc::clone(&shutdown);
+                    let worker_state = Arc::clone(&state);
+                    let worker_policy = policy.clone();
+                    let worker = thread::spawn(move || {
+                        let _ = handle_client(
+                            stream,
+                            upstream,
+                            connect_timeout,
+                            &worker_policy,
+                            &worker_shutdown,
+                            &worker_state,
+                        );
+                    });
+                    match workers.lock() {
+                        Ok(mut handles) => handles.push(worker),
+                        Err(poisoned) => {
+                            state.store(STATE_OFFLINE, Ordering::Release);
+                            let mut handles = poisoned.into_inner();
+                            handles.push(worker);
+                            break;
+                        }
+                    }
+                }
+                Err(_) => {
+                    if !shutdown.load(Ordering::Acquire) {
+                        state.store(STATE_OFFLINE, Ordering::Release);
+                    }
+                    break;
                 }
             }
         });
@@ -309,19 +316,20 @@ impl RestrictedSocks5Transport {
     fn stop_internal(&mut self) {
         self.shutdown.store(true, Ordering::Release);
         if let Some(endpoint) = self.local_endpoint {
-            let _ = TcpStream::connect_timeout(
-                &endpoint.socket_addr(),
-                Duration::from_millis(100),
-            );
+            let _ =
+                TcpStream::connect_timeout(&endpoint.socket_addr(), Duration::from_millis(100));
         }
         if let Some(handle) = self.listener_handle.take() {
             let _ = handle.join();
         }
-        if let Ok(mut workers) = self.workers.lock() {
-            for worker in workers.drain(..) {
-                let _ = worker.join();
-            }
+        let mut workers = match self.workers.lock() {
+            Ok(workers) => workers,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        for worker in workers.drain(..) {
+            let _ = worker.join();
         }
+        drop(workers);
         self.local_endpoint = None;
         self.set_state(TransportState::Stopped);
     }
@@ -337,7 +345,10 @@ impl TransportProvider for RestrictedSocks5Transport {
     }
 
     fn local_proxy(&self) -> Option<LocalProxyEndpoint> {
-        if matches!(self.state(), TransportState::Ready | TransportState::Degraded) {
+        if matches!(
+            self.state(),
+            TransportState::Ready | TransportState::Degraded
+        ) {
             self.local_endpoint
         } else {
             None
@@ -460,9 +471,9 @@ fn handle_client(
     }
 
     client.set_read_timeout(Some(STREAM_POLL_TIMEOUT))?;
-    client.set_write_timeout(None)?;
+    client.set_write_timeout(Some(STREAM_POLL_TIMEOUT))?;
     upstream.set_read_timeout(Some(STREAM_POLL_TIMEOUT))?;
-    upstream.set_write_timeout(None)?;
+    upstream.set_write_timeout(Some(STREAM_POLL_TIMEOUT))?;
     relay_bidirectional(client, upstream, shutdown)
 }
 
@@ -514,7 +525,11 @@ fn read_target(stream: &mut TcpStream, atyp: u8) -> io::Result<SocksTarget> {
     }
 }
 
-fn write_connect_request(stream: &mut TcpStream, target: &SocksTarget, port: u16) -> io::Result<()> {
+fn write_connect_request(
+    stream: &mut TcpStream,
+    target: &SocksTarget,
+    port: u16,
+) -> io::Result<()> {
     let mut request = vec![0x05, 0x01, 0x00];
     match target {
         SocksTarget::Domain(domain) => {
@@ -606,11 +621,7 @@ fn relay_bidirectional(
     Ok(())
 }
 
-fn copy_until_shutdown(
-    mut reader: TcpStream,
-    mut writer: TcpStream,
-    shutdown: &AtomicBool,
-) {
+fn copy_until_shutdown(mut reader: TcpStream, mut writer: TcpStream, shutdown: &AtomicBool) {
     let mut buffer = [0_u8; 16 * 1024];
     while !shutdown.load(Ordering::Acquire) {
         match reader.read(&mut buffer) {
