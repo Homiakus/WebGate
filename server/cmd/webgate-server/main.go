@@ -31,17 +31,42 @@ func main() {
 	flag.StringVar(configPath, "c", "", "Path to server configuration file (shorthand)")
 	stateDBPath := flag.String("state-db", stateDBPathFromEnvironment(), "Path to durable WebGate SQLite state")
 	flag.StringVar(stateDBPath, "state", stateDBPathFromEnvironment(), "Path to durable WebGate SQLite state (shorthand)")
+	backupStatePath := flag.String("backup-state", "", "Create a validated SQLite state snapshot at this path and exit")
+	restoreStatePath := flag.String("restore-state", "", "Restore a validated SQLite snapshot into --state-db and exit; target must not already exist")
 	flag.Parse()
 
 	log.Println("───────────────────────────────────────────────────────────────────────────")
 	log.Println(" 01 / WEBGATE СЕРВЕРНЫЙ ШЛЮЗ И ПАНЕЛЬ УПРАВЛЕНИЯ")
 	log.Println("───────────────────────────────────────────────────────────────────────────")
 
+	if strings.TrimSpace(*restoreStatePath) != "" {
+		if err := persistence.RestoreSQLiteBackup(*restoreStatePath, *stateDBPath); err != nil {
+			log.Fatalf("[Состояние] Restore отклонён: %v", err)
+		}
+		log.Printf("[Состояние] Restore завершён: %s -> %s", *restoreStatePath, *stateDBPath)
+		return
+	}
+
+	stateDBExisted, err := stateFileExists(*stateDBPath)
+	if err != nil {
+		log.Fatalf("[Состояние] Не удалось проверить state DB %s: %v", *stateDBPath, err)
+	}
 	stateStore, err := persistence.OpenSQLiteRegistryStore(*stateDBPath)
 	if err != nil {
 		log.Fatalf("[Состояние] Не удалось открыть durable state %s: %v", *stateDBPath, err)
 	}
 	defer stateStore.Close()
+	controlStore, err := persistence.OpenSQLiteControlStore(stateStore)
+	if err != nil {
+		log.Fatalf("[Состояние] Не удалось открыть durable control state: %v", err)
+	}
+	if strings.TrimSpace(*backupStatePath) != "" {
+		if err := controlStore.BackupTo(*backupStatePath); err != nil {
+			log.Fatalf("[Состояние] Backup отклонён: %v", err)
+		}
+		log.Printf("[Состояние] Backup создан: %s", *backupStatePath)
+		return
+	}
 
 	svcReg := registry.NewServiceRegistryWithPersistence(stateStore)
 	devReg := registry.NewDeviceRegistryWithPersistence(stateStore)
@@ -52,6 +77,14 @@ func main() {
 	log.Printf("[Состояние] Восстановлено: services=%d devices=%d releases=%d", len(svcReg.List()), len(devReg.List()), len(relReg.List()))
 
 	serverCfg := config.DefaultServerConfig()
+	persistedControl, err := controlStore.LoadControlConfig()
+	if err != nil {
+		log.Fatalf("[Состояние] Durable control config повреждён или несовместим: %v", err)
+	}
+	if persistedControl != nil {
+		config.ApplyDurableSnapshot(serverCfg, persistedControl)
+		log.Printf("[Конфиг] Восстановлена durable control-конфигурация: %s", serverCfg.ServerName)
+	}
 	if *configPath != "" {
 		log.Printf("[Конфиг] Привязка внешнего файла настроек: %s\n", *configPath)
 		loaded, err := config.LoadConfigFile(*configPath)
@@ -59,17 +92,28 @@ func main() {
 			log.Fatalf("[Конфиг] Ошибка загрузки %s: %v", *configPath, err)
 		}
 		serverCfg = loaded
-		log.Printf("[Конфиг] Успешно загружен профиль: '%s' с %d маршрутами upstream\n", serverCfg.ServerName, len(serverCfg.Services))
+		log.Printf("[Конфиг] Успешно загружен профиль: '%s'", serverCfg.ServerName)
 	}
 
 	if err := config.HardenRuntimeAddresses(serverCfg); err != nil {
 		log.Fatalf("[Безопасность] Небезопасная конфигурация listener: %v", err)
 	}
-	if err := serverCfg.ApplyToRegistries(svcReg); err != nil {
-		log.Fatalf("[Конфиг] Не удалось применить реестр сервисов: %v", err)
+
+	// Service definitions bootstrap only a truly new state file. Once a durable
+	// database exists, even an intentionally empty service registry is authoritative
+	// and must not be silently resurrected from defaults or a config file.
+	if !stateDBExisted && len(svcReg.List()) == 0 {
+		if err := serverCfg.ApplyToRegistries(svcReg); err != nil {
+			log.Fatalf("[Конфиг] Не удалось выполнить initial service bootstrap: %v", err)
+		}
+		if err := ensureConfiguredServicesPresent(serverCfg, svcReg); err != nil {
+			log.Fatalf("[Конфиг] Initial service bootstrap не зафиксирован: %v", err)
+		}
+	} else if len(serverCfg.Services) > 0 {
+		log.Printf("[Конфиг] Durable service registry уже является источником истины; service entries из config не пере-засеиваются")
 	}
-	if err := ensureConfiguredServicesPresent(serverCfg, svcReg); err != nil {
-		log.Fatalf("[Конфиг] Конфигурация не зафиксирована в durable registry: %v", err)
+	if err := controlStore.SaveControlConfig(config.DurableSnapshot(serverCfg)); err != nil {
+		log.Fatalf("[Состояние] Не удалось зафиксировать durable control config: %v", err)
 	}
 
 	// No synthetic production devices are seeded here. Every real device must be
@@ -82,8 +126,7 @@ func main() {
 	// The historical admin prototype still carries an unused legacy-authorizer
 	// parameter. T-051 removes it when management authorization is requalified.
 	adminAPI := admin.NewAdminAPI(svcReg, devReg, relReg, delSvc, nil)
-	adminAPI.SetConfig(serverCfg)
-	adminAPI.LogAudit(domain.AuditActionServiceCreated, "system", "config", "Bound server config: "+serverCfg.ServerName)
+	adminAPI.InstallConfig(serverCfg)
 
 	serviceAuthorizer, authorityEndpoint, err := serviceAuthorizerFromEnvironment()
 	if err != nil {
@@ -107,8 +150,15 @@ func main() {
 
 	adminMux := http.NewServeMux()
 	adminAPI.RegisterRoutes(adminMux)
+	durableAdmin, err := admin.NewDurableAdminHandler(adminAPI, controlStore, adminMux)
+	if err != nil {
+		log.Fatalf("[Состояние] Не удалось восстановить durable admin state: %v", err)
+	}
+	if err := durableAdmin.RecordAudit(domain.AuditActionServiceUpdated, "system", "config", "Bound server control config: "+serverCfg.ServerName); err != nil {
+		log.Fatalf("[Состояние] Не удалось зафиксировать startup audit: %v", err)
+	}
 	adminToken := os.Getenv("WEBGATE_ADMIN_TOKEN")
-	adminHandler, err := admin.RequireAdminToken(adminMux, adminToken)
+	adminHandler, err := admin.RequireAdminToken(durableAdmin, adminToken)
 	if err != nil {
 		log.Fatalf("[Безопасность] WEBGATE_ADMIN_TOKEN должен быть случайным секретом не короче 32 байт: %v", err)
 	}
@@ -145,6 +195,17 @@ func stateDBPathFromEnvironment() string {
 		return configured
 	}
 	return defaultStateDBPath
+}
+
+func stateFileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 func restoreDurableRegistries(
