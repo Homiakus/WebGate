@@ -46,7 +46,9 @@ fn read_target(stream: &mut TcpStream, atyp: u8) -> std::io::Result<String> {
     }
 }
 
-fn spawn_fake_sidecar(max_connections: usize) -> (SocketAddr, Receiver<ObservedConnect>, JoinHandle<()>) {
+fn spawn_fake_sidecar(
+    max_connections: usize,
+) -> (SocketAddr, Receiver<ObservedConnect>, JoinHandle<()>) {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let address = listener.local_addr().unwrap();
     let (tx, rx) = mpsc::channel();
@@ -144,12 +146,8 @@ fn request_domain(stream: &mut TcpStream, command: u8, host: &str, port: u16) ->
 #[test]
 fn starts_only_after_sidecar_handshake_and_forwards_allowed_bytes() {
     let (upstream, observed, sidecar) = spawn_fake_sidecar(2);
-    let mut transport = RestrictedSocks5Transport::new(config(
-        upstream,
-        vec!["docs.internal"],
-        vec![443],
-    ))
-    .unwrap();
+    let mut transport =
+        RestrictedSocks5Transport::new(config(upstream, vec!["docs.internal"], vec![443])).unwrap();
 
     assert_eq!(transport.state(), TransportState::Stopped);
     assert_eq!(transport.local_proxy(), None);
@@ -165,7 +163,10 @@ fn starts_only_after_sidecar_handshake_and_forwards_allowed_bytes() {
         .set_read_timeout(Some(Duration::from_secs(1)))
         .unwrap();
     socks5_greeting(&mut client);
-    assert_eq!(request_domain(&mut client, 0x01, "docs.internal", 443), 0x00);
+    assert_eq!(
+        request_domain(&mut client, 0x01, "docs.internal", 443),
+        0x00
+    );
     client.write_all(b"ping").unwrap();
     let mut pong = [0_u8; 4];
     client.read_exact(&mut pong).unwrap();
@@ -188,12 +189,8 @@ fn starts_only_after_sidecar_handshake_and_forwards_allowed_bytes() {
 #[test]
 fn disallowed_destination_is_rejected_before_upstream_connect() {
     let (upstream, _observed, sidecar) = spawn_fake_sidecar(1);
-    let mut transport = RestrictedSocks5Transport::new(config(
-        upstream,
-        vec!["docs.internal"],
-        vec![443],
-    ))
-    .unwrap();
+    let mut transport =
+        RestrictedSocks5Transport::new(config(upstream, vec!["docs.internal"], vec![443])).unwrap();
     let endpoint = transport.start_proxy().unwrap();
 
     let mut client = TcpStream::connect(endpoint.socket_addr()).unwrap();
@@ -207,12 +204,8 @@ fn disallowed_destination_is_rejected_before_upstream_connect() {
 #[test]
 fn wildcard_matching_requires_a_domain_label_boundary_and_preserves_domain_for_upstream_dns() {
     let (upstream, observed, sidecar) = spawn_fake_sidecar(2);
-    let mut transport = RestrictedSocks5Transport::new(config(
-        upstream,
-        vec!["*.internal"],
-        vec![443],
-    ))
-    .unwrap();
+    let mut transport =
+        RestrictedSocks5Transport::new(config(upstream, vec!["*.internal"], vec![443])).unwrap();
     let endpoint = transport.start_proxy().unwrap();
 
     let mut denied = TcpStream::connect(endpoint.socket_addr()).unwrap();
@@ -222,7 +215,10 @@ fn wildcard_matching_requires_a_domain_label_boundary_and_preserves_domain_for_u
 
     let mut allowed = TcpStream::connect(endpoint.socket_addr()).unwrap();
     socks5_greeting(&mut allowed);
-    assert_eq!(request_domain(&mut allowed, 0x01, "app.internal", 443), 0x00);
+    assert_eq!(
+        request_domain(&mut allowed, 0x01, "app.internal", 443),
+        0x00
+    );
 
     assert_eq!(
         observed.recv_timeout(Duration::from_secs(1)).unwrap(),
@@ -239,12 +235,8 @@ fn wildcard_matching_requires_a_domain_label_boundary_and_preserves_domain_for_u
 #[test]
 fn destination_port_policy_is_enforced_locally() {
     let (upstream, _observed, sidecar) = spawn_fake_sidecar(1);
-    let mut transport = RestrictedSocks5Transport::new(config(
-        upstream,
-        vec!["docs.internal"],
-        vec![443],
-    ))
-    .unwrap();
+    let mut transport =
+        RestrictedSocks5Transport::new(config(upstream, vec!["docs.internal"], vec![443])).unwrap();
     let endpoint = transport.start_proxy().unwrap();
 
     let mut client = TcpStream::connect(endpoint.socket_addr()).unwrap();
@@ -258,18 +250,17 @@ fn destination_port_policy_is_enforced_locally() {
 #[test]
 fn udp_and_bind_commands_are_rejected_locally() {
     let (upstream, _observed, sidecar) = spawn_fake_sidecar(1);
-    let mut transport = RestrictedSocks5Transport::new(config(
-        upstream,
-        vec!["docs.internal"],
-        vec![443],
-    ))
-    .unwrap();
+    let mut transport =
+        RestrictedSocks5Transport::new(config(upstream, vec!["docs.internal"], vec![443])).unwrap();
     let endpoint = transport.start_proxy().unwrap();
 
     for command in [0x02, 0x03] {
         let mut client = TcpStream::connect(endpoint.socket_addr()).unwrap();
         socks5_greeting(&mut client);
-        assert_eq!(request_domain(&mut client, command, "docs.internal", 443), 0x07);
+        assert_eq!(
+            request_domain(&mut client, command, "docs.internal", 443),
+            0x07
+        );
     }
 
     transport.stop();
@@ -292,12 +283,8 @@ fn empty_destination_policy_is_invalid() {
 #[test]
 fn plaintext_sidecar_upstream_must_be_loopback() {
     let upstream = SocketAddr::from(([192, 0, 2, 10], 43111));
-    let mut transport = RestrictedSocks5Transport::new(config(
-        upstream,
-        vec!["docs.internal"],
-        vec![443],
-    ))
-    .unwrap();
+    let mut transport =
+        RestrictedSocks5Transport::new(config(upstream, vec!["docs.internal"], vec![443])).unwrap();
 
     assert!(matches!(
         transport.start_proxy(),
@@ -313,12 +300,8 @@ fn unavailable_sidecar_never_publishes_local_proxy() {
     let upstream = reserved.local_addr().unwrap();
     drop(reserved);
 
-    let mut transport = RestrictedSocks5Transport::new(config(
-        upstream,
-        vec!["docs.internal"],
-        vec![443],
-    ))
-    .unwrap();
+    let mut transport =
+        RestrictedSocks5Transport::new(config(upstream, vec!["docs.internal"], vec![443])).unwrap();
 
     assert!(matches!(
         transport.start_proxy(),
@@ -339,12 +322,8 @@ fn non_socks5_sidecar_never_becomes_ready() {
         stream.write_all(&[0x05, 0xff]).unwrap();
     });
 
-    let mut transport = RestrictedSocks5Transport::new(config(
-        upstream,
-        vec!["docs.internal"],
-        vec![443],
-    ))
-    .unwrap();
+    let mut transport =
+        RestrictedSocks5Transport::new(config(upstream, vec!["docs.internal"], vec![443])).unwrap();
 
     assert!(matches!(
         transport.start_proxy(),
