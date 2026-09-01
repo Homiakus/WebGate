@@ -6,6 +6,7 @@ use std::net::{TcpListener, TcpStream};
 use std::process::Command;
 use std::sync::{Arc, RwLock};
 use std::thread;
+use std::time::Duration;
 
 use webgate_browser::BrowserKind;
 use webgate_browser::capsule::BrowserCapsule;
@@ -16,14 +17,18 @@ use webgate_core::config::{ClientConfigProfile, ConfigError};
 use webgate_platform::current_platform;
 use webgate_platform::keystore::{DeviceKeyStore, InMemoryDeviceKeyStore};
 use webgate_transport::failover::{FailoverConfig, TransportFailoverController};
+use webgate_transport::restricted_socks5::{
+    RestrictedProxyError, RestrictedSocks5Config, RestrictedSocks5Transport,
+};
 use webgate_transport::{LocalProxyEndpoint, TransportProvider, TransportState};
 
 const CLIENT_UI_HTML: &str = include_str!("client_ui.html");
+const PRIMARY_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Configuration-only relay placeholder.
+/// Configuration-only fallback placeholder.
 ///
-/// A configured address/port is not proof that a listener or protected tunnel exists.
-/// Until T-036 supplies a real provider backend, this provider stays fail-closed.
+/// T-036 supplies a real primary provider. A configured fallback address/port is
+/// still not proof that an independent protected transport exists; T-042 owns it.
 #[derive(Debug)]
 struct ConfiguredRelayTransport {
     name: String,
@@ -50,6 +55,20 @@ fn load_client_profile(config_path: Option<&str>) -> Result<ClientConfigProfile,
         Some(path) => ClientConfigProfile::load_from_file(path),
         None => Ok(ClientConfigProfile::default()),
     }
+}
+
+fn build_primary_transport(
+    profile: &ClientConfigProfile,
+) -> Result<RestrictedSocks5Transport, RestrictedProxyError> {
+    RestrictedSocks5Transport::new(RestrictedSocks5Config {
+        name: profile.primary_relay.name.clone(),
+        upstream_host: profile.primary_relay.address.clone(),
+        upstream_port: profile.primary_relay.port,
+        local_listen_port: 0,
+        allowed_domains: profile.allowed_domains.clone(),
+        allowed_ports: vec![443],
+        connect_timeout: PRIMARY_PROXY_CONNECT_TIMEOUT,
+    })
 }
 
 const fn transport_state_label(state: TransportState) -> &'static str {
@@ -425,11 +444,24 @@ fn main() {
         }
     };
 
-    // Relay configuration alone is not connectivity. The placeholder providers
-    // remain Offline until T-036 replaces them with real bound/probed providers.
-    let primary = ConfiguredRelayTransport {
-        name: profile.primary_relay.name.clone(),
+    // T-036 primary path: the browser-facing listener is real, loopback-only and
+    // destination restricted. It never direct-dials protected destinations; every
+    // allowed CONNECT is delegated to the explicitly configured local SOCKS5 sidecar.
+    let mut primary = match build_primary_transport(&profile) {
+        Ok(primary) => primary,
+        Err(error) => {
+            eprintln!("[Транспорт] Некорректная политика primary proxy: {error:?}");
+            return;
+        }
     };
+    if let Err(error) = primary.start_proxy() {
+        eprintln!(
+            "[Транспорт] Primary sidecar не подтверждён ({error:?}); protected proxy остаётся OFFLINE."
+        );
+    }
+
+    // T-042 owns a materially independent fallback transport. Configuration alone
+    // is not readiness, so the fallback deliberately remains Offline here.
     let fallback = ConfiguredRelayTransport {
         name: profile
             .fallback_relay
@@ -558,12 +590,35 @@ mod tests {
     }
 
     #[test]
-    fn configured_transport_is_offline_without_backend() {
+    fn configured_fallback_is_offline_without_backend() {
         let transport = ConfiguredRelayTransport {
             name: "configured-only".to_string(),
         };
         assert_eq!(transport.state(), TransportState::Offline);
         assert_eq!(transport.local_proxy(), None);
+    }
+
+    #[test]
+    fn primary_transport_rejects_nonloopback_plaintext_sidecar() {
+        let mut profile = ClientConfigProfile::default();
+        profile.primary_relay.address = "192.0.2.10".to_string();
+        let mut transport = build_primary_transport(&profile).unwrap();
+        assert!(matches!(
+            transport.start_proxy(),
+            Err(RestrictedProxyError::UpstreamNotLoopback)
+        ));
+        assert_eq!(transport.state(), TransportState::Offline);
+        assert_eq!(transport.local_proxy(), None);
+    }
+
+    #[test]
+    fn primary_transport_rejects_empty_destination_policy() {
+        let mut profile = ClientConfigProfile::default();
+        profile.allowed_domains.clear();
+        assert!(matches!(
+            build_primary_transport(&profile),
+            Err(RestrictedProxyError::EmptyAllowedDomains)
+        ));
     }
 
     #[test]
