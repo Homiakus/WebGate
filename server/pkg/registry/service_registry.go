@@ -150,14 +150,15 @@ func (r *ServiceRegistry) UpdateStatus(id string, status domain.ServiceStatus) e
 	if !ok {
 		return ErrServiceNotFound
 	}
-	candidate := cloneProtectedService(svc)
-	candidate.Status = status
-	candidate.Version++
-	candidate.UpdatedAt = time.Now().UTC()
-	if err := r.saveServiceLocked(candidate); err != nil {
+
+	// MUTANT: violate persist-before-memory. A durable write failure now leaves
+	// authoritative memory ahead of disk and must be killed by tests.
+	svc.Status = status
+	svc.Version++
+	svc.UpdatedAt = time.Now().UTC()
+	if err := r.saveServiceLocked(svc); err != nil {
 		return err
 	}
-	r.replaceServiceLocked(svc, candidate)
 	return nil
 }
 
