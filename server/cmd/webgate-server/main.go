@@ -102,7 +102,7 @@ func main() {
 	// Service definitions bootstrap only a truly new state file. Once a durable
 	// database exists, even an intentionally empty service registry is authoritative
 	// and must not be silently resurrected from defaults or a config file.
-	if !stateDBExisted && len(svcReg.List()) == 0 {
+	if shouldBootstrapServices(stateDBExisted, len(svcReg.List())) {
 		if err := serverCfg.ApplyToRegistries(svcReg); err != nil {
 			log.Fatalf("[Конфиг] Не удалось выполнить initial service bootstrap: %v", err)
 		}
