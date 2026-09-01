@@ -2,6 +2,7 @@
 
 pub mod failover;
 pub mod relay;
+pub mod restricted_socks5;
 
 use std::net::{IpAddr, SocketAddr};
 
