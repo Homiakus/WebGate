@@ -252,41 +252,43 @@ impl RestrictedSocks5Transport {
         let policy = self.policy.clone();
         let connect_timeout = self.config.connect_timeout;
 
-        let handle = thread::spawn(move || loop {
-            let accepted = listener.accept();
-            match accepted {
-                Ok((stream, _)) => {
-                    if shutdown.load(Ordering::Acquire) {
-                        break;
-                    }
-                    let worker_shutdown = Arc::clone(&shutdown);
-                    let worker_state = Arc::clone(&state);
-                    let worker_policy = policy.clone();
-                    let worker = thread::spawn(move || {
-                        let _ = handle_client(
-                            stream,
-                            upstream,
-                            connect_timeout,
-                            &worker_policy,
-                            &worker_shutdown,
-                            &worker_state,
-                        );
-                    });
-                    match workers.lock() {
-                        Ok(mut handles) => handles.push(worker),
-                        Err(poisoned) => {
-                            state.store(STATE_OFFLINE, Ordering::Release);
-                            let mut handles = poisoned.into_inner();
-                            handles.push(worker);
+        let handle = thread::spawn(move || {
+            loop {
+                let accepted = listener.accept();
+                match accepted {
+                    Ok((stream, _)) => {
+                        if shutdown.load(Ordering::Acquire) {
                             break;
                         }
+                        let worker_shutdown = Arc::clone(&shutdown);
+                        let worker_state = Arc::clone(&state);
+                        let worker_policy = policy.clone();
+                        let worker = thread::spawn(move || {
+                            let _ = handle_client(
+                                stream,
+                                upstream,
+                                connect_timeout,
+                                &worker_policy,
+                                &worker_shutdown,
+                                &worker_state,
+                            );
+                        });
+                        match workers.lock() {
+                            Ok(mut handles) => handles.push(worker),
+                            Err(poisoned) => {
+                                state.store(STATE_OFFLINE, Ordering::Release);
+                                let mut handles = poisoned.into_inner();
+                                handles.push(worker);
+                                break;
+                            }
+                        }
                     }
-                }
-                Err(_) => {
-                    if !shutdown.load(Ordering::Acquire) {
-                        state.store(STATE_OFFLINE, Ordering::Release);
+                    Err(_) => {
+                        if !shutdown.load(Ordering::Acquire) {
+                            state.store(STATE_OFFLINE, Ordering::Release);
+                        }
+                        break;
                     }
-                    break;
                 }
             }
         });
@@ -316,8 +318,7 @@ impl RestrictedSocks5Transport {
     fn stop_internal(&mut self) {
         self.shutdown.store(true, Ordering::Release);
         if let Some(endpoint) = self.local_endpoint {
-            let _ =
-                TcpStream::connect_timeout(&endpoint.socket_addr(), Duration::from_millis(100));
+            let _ = TcpStream::connect_timeout(&endpoint.socket_addr(), Duration::from_millis(100));
         }
         if let Some(handle) = self.listener_handle.take() {
             let _ = handle.join();
