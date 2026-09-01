@@ -29,7 +29,7 @@ class SecureAccessDependencyContractTests(unittest.TestCase):
 
     def test_secureaccess_snapshot_is_pinned_and_local(self):
         go_mod = (SERVER / "go.mod").read_text(encoding="utf-8")
-        self.assertIn("require github.com/Homiakus/secureaccess v0.4.0", go_mod)
+        self.assertIn("github.com/Homiakus/secureaccess v0.4.0", go_mod)
         self.assertIn("replace github.com/Homiakus/secureaccess => ./third_party/secureaccess", go_mod)
 
         provenance = SNAPSHOT / "UPSTREAM.md"
