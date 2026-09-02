@@ -15,7 +15,7 @@ use webgate_core::broker::{
 };
 use webgate_core::config::{ClientConfigProfile, ConfigError};
 use webgate_platform::current_platform;
-use webgate_platform::keystore::{DeviceKeyStore, InMemoryDeviceKeyStore};
+use webgate_platform::keystore::{DeviceKeyStore, PersistentFileDeviceKeyStore};
 use webgate_transport::failover::{FailoverConfig, TransportFailoverController};
 use webgate_transport::restricted_socks5::{
     RestrictedProxyError, RestrictedSocks5Config, RestrictedSocks5Transport,
@@ -433,13 +433,37 @@ fn main() {
         return;
     }
 
-    // InMemoryDeviceKeyStore remains an explicit prototype limitation tracked by
-    // F-032/T-040. It must not be mistaken for production platform key storage.
-    let mut keystore = InMemoryDeviceKeyStore::new();
-    let device_id = match keystore.generate_key(profile.key_algorithm, &profile.device_label) {
-        Ok(ident) => ident.id,
+    // T-040: Production platform key storage with persistence on disk.
+    let key_path = std::env::var("WEBGATE_DEVICE_KEY_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join(".webgate")
+                .join("device.key")
+        });
+
+    let keystore = match PersistentFileDeviceKeyStore::open(&key_path) {
+        Ok(mut ks) => {
+            if ks.get_device_identity().ok().flatten().is_none()
+                && ks
+                    .generate_key(profile.key_algorithm, &profile.device_label)
+                    .is_err()
+            {
+                eprintln!("[Хранилище ключей] Ошибка генерации ключа устройства");
+                return;
+            }
+            ks
+        }
         Err(e) => {
-            eprintln!("[Хранилище ключей] Ошибка генерации ключа устройства: {e:?}");
+            eprintln!("[Хранилище ключей] Ошибка открытия хранилища ключей: {e:?}");
+            return;
+        }
+    };
+    let device_id = match keystore.get_device_identity() {
+        Ok(Some(ident)) => ident.id,
+        _ => {
+            eprintln!("[Хранилище ключей] Идентификатор устройства не найден");
             return;
         }
     };

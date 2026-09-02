@@ -3,6 +3,7 @@
 pub mod broker;
 pub mod config;
 pub mod device;
+pub mod ed25519;
 pub mod policy;
 pub mod release;
 
