@@ -17,6 +17,7 @@ import (
 	"github.com/Homiakus/WebGate/server/pkg/delivery"
 	"github.com/Homiakus/WebGate/server/pkg/domain"
 	"github.com/Homiakus/WebGate/server/pkg/gateway"
+	"github.com/Homiakus/WebGate/server/pkg/origin"
 	"github.com/Homiakus/WebGate/server/pkg/persistence"
 	"github.com/Homiakus/WebGate/server/pkg/registry"
 )
@@ -181,6 +182,36 @@ func main() {
 
 	log.Printf("[Data Plane] WebGate Gateway слушает http://%s (Gateway: /svc/{slug}/)", dataListener.Addr())
 	log.Printf("[Admin Plane] WebGate Admin слушает http://%s/admin (требуется аутентификация)", adminListener.Addr())
+
+	if len(serverCfg.RelayNodes) > 0 {
+		var relays []origin.RelayTarget
+		for _, node := range serverCfg.RelayNodes {
+			relays = append(relays, origin.RelayTarget{
+				ID:      node.ID,
+				Name:    node.Name,
+				Address: node.Address,
+				Port:    node.Port,
+			})
+		}
+		relayToken := os.Getenv("WEBGATE_RELAY_CLUSTER_TOKEN")
+		originAgent, err := origin.NewOriginReverseAgent(origin.AgentConfig{
+			ClusterID:      "webgate-cluster",
+			OriginID:       serverCfg.ServerName,
+			DefaultToken:   relayToken,
+			TargetDataAddr: dataListener.Addr().String(),
+			Relays:         relays,
+		})
+		if err != nil {
+			log.Printf("[Origin Agent] Предупреждение: не удалось инициализировать reverse agent: %v", err)
+		} else {
+			if err := originAgent.Start(); err != nil {
+				log.Printf("[Origin Agent] Ошибка запуска reverse agent: %v", err)
+			} else {
+				defer originAgent.Stop()
+				log.Printf("[Origin Agent] Запущен reverse agent для %d relay-узлов (target: %s)", len(relays), dataListener.Addr())
+			}
+		}
+	}
 
 	errCh := make(chan error, 2)
 	go func() { errCh <- dataServer.Serve(dataListener) }()
