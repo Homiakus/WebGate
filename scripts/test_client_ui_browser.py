@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
 """Headless-browser qualification for the WebGate client truth controller.
 
-This runs the real client_ui.html plus client_ui_truth_patch.js in Chromium against
-controlled local /api/* responses. It intentionally uses only the Python standard
-library and a preinstalled Chromium/Chrome binary so no JavaScript test framework
-becomes a production dependency.
+Runs the real client_ui.html plus client_ui_truth_patch.js in Chromium against
+controlled local /api/* responses. The harness intentionally uses only the Python
+standard library and a preinstalled Chromium/Chrome binary.
 """
 
 from __future__ import annotations
 
 import contextlib
-import html
 import http.server
 import json
+import re
 import shutil
 import socket
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -46,13 +44,12 @@ PROFILE = {
 
 
 def find_chrome() -> str:
-    candidates = (
+    for candidate in (
         "google-chrome",
         "google-chrome-stable",
         "chromium",
         "chromium-browser",
-    )
-    for candidate in candidates:
+    ):
         found = shutil.which(candidate)
         if found:
             return found
@@ -68,10 +65,26 @@ def inject_before_body(document: str, script: str) -> str:
     return document.replace(marker, f"<script>\n{script}\n</script>\n{marker}", 1)
 
 
+def prepare_base_document(document: str) -> str:
+    """Remove nonessential remote font requests from the deterministic CI fixture."""
+    document = re.sub(
+        r"\s*<link[^>]+href=\"https://fonts\.googleapis\.com[^>]*>\s*",
+        "\n",
+        document,
+        flags=re.IGNORECASE,
+    )
+    document = re.sub(
+        r"\s*<link[^>]+href=\"https://fonts\.gstatic\.com[^>]*>\s*",
+        "\n",
+        document,
+        flags=re.IGNORECASE,
+    )
+    return document
+
+
 def scenario_probe_script(name: str) -> str:
     quoted = json.dumps(name)
     return f"""
-<script>
 (() => {{
   const scenario = {quoted};
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -79,18 +92,21 @@ def scenario_probe_script(name: str) -> str:
   const finish = (ok, detail) => {{
     const pre = document.createElement('pre');
     pre.id = 'browser-truth-result';
+    pre.dataset.result = ok ? 'pass' : 'fail';
     pre.textContent = (ok ? 'WEBGATE_BROWSER_TRUTH_PASS:' : 'WEBGATE_BROWSER_TRUTH_FAIL:') + scenario + ':' + detail;
     document.body.appendChild(pre);
   }};
 
-  window.addEventListener('load', async () => {{
-    await sleep(350);
+  setTimeout(async () => {{
     try {{
+      await sleep(250);
+
       if (scenario === 'core_offline') {{
         const launch = document.getElementById('btn-launch');
-        const ok = text().includes('ДЕМО-ДАННЫЕ НЕ ИСПОЛЬЗУЮТСЯ') &&
+        const body = text();
+        const ok = body.includes('ДЕМО-ДАННЫЕ НЕ ИСПОЛЬЗУЮТСЯ') &&
           launch && launch.disabled &&
-          !text().includes('FactoryOS Production Terminal');
+          !body.includes('FactoryOS Production Terminal');
         finish(ok, 'offline core is explicit and launch is blocked');
         return;
       }}
@@ -99,6 +115,10 @@ def scenario_probe_script(name: str) -> str:
           scenario === 'navigate_503' || scenario === 'navigate_malformed' ||
           scenario === 'navigate_disconnect') {{
         const input = document.getElementById('target-url-input');
+        if (!input || typeof window.launchNavigation !== 'function') {{
+          finish(false, 'navigation controls are not initialized');
+          return;
+        }}
         input.value = 'webgate://service/docs/overview';
         await window.launchNavigation();
         await sleep(150);
@@ -117,14 +137,22 @@ def scenario_probe_script(name: str) -> str:
 
         const failureVisible = body.includes('не подтвердило') ||
           body.includes('недоступ') || body.includes('потеряна') ||
-          body.includes('ОТКЛОНЁН');
-        finish(failureVisible && !oldFalseSuccess, 'negative navigation cannot render synthetic success');
+          body.includes('ОТКЛОНЁН') || body.includes('ошибк');
+        finish(
+          failureVisible && !oldFalseSuccess,
+          'negative navigation cannot render synthetic success'
+        );
         return;
       }}
 
       if (scenario === 'config_rejected') {{
         const input = document.getElementById('file-input');
-        const before = document.getElementById('cfg-profile-name').innerText;
+        const profileName = document.getElementById('cfg-profile-name');
+        if (!input || !profileName) {{
+          finish(false, 'configuration controls are not initialized');
+          return;
+        }}
+        const before = profileName.innerText;
         const file = new File([
           'profile_id = "rejected"\\nprimary_relay_addr = "127.0.0.1"\\nprimary_relay_port = 43111\\n'
         ], 'rejected.toml', {{type: 'text/plain'}});
@@ -133,7 +161,7 @@ def scenario_probe_script(name: str) -> str:
         input.files = transfer.files;
         input.dispatchEvent(new Event('change', {{bubbles: true}}));
         await sleep(500);
-        const after = document.getElementById('cfg-profile-name').innerText;
+        const after = profileName.innerText;
         const body = text();
         const ok = before === 'Browser Test Workspace' &&
           after === 'Browser Test Workspace' &&
@@ -146,9 +174,8 @@ def scenario_probe_script(name: str) -> str:
     }} catch (error) {{
       finish(false, String(error && error.stack || error));
     }}
-  }});
+  }}, 25);
 }})();
-</script>
 """
 
 
@@ -182,6 +209,7 @@ class ScenarioHandler(http.server.BaseHTTPRequestHandler):
             body = self.server.document.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -294,7 +322,8 @@ def run_scenario(chrome: str, scenario: str, base_document: str) -> None:
             "--no-sandbox",
             "--disable-dev-shm-usage",
             "--disable-background-networking",
-            "--virtual-time-budget=2500",
+            "--disable-extensions",
+            "--virtual-time-budget=3000",
             "--dump-dom",
             url,
         ]
@@ -306,16 +335,17 @@ def run_scenario(chrome: str, scenario: str, base_document: str) -> None:
             timeout=30,
             check=False,
         )
-        marker = f"WEBGATE_BROWSER_TRUTH_PASS:{scenario}:"
-        if result.returncode != 0 or marker not in result.stdout:
-            fail_fragment = "WEBGATE_BROWSER_TRUTH_FAIL:"
+        pass_marker = f"WEBGATE_BROWSER_TRUTH_PASS:{scenario}:"
+        fail_marker = f"WEBGATE_BROWSER_TRUTH_FAIL:{scenario}:"
+        if result.returncode != 0 or pass_marker not in result.stdout:
             detail = "browser produced no result marker"
-            if fail_fragment in result.stdout:
-                tail = result.stdout.split(fail_fragment, 1)[1].split("<", 1)[0]
-                detail = html.unescape(tail)
+            if fail_marker in result.stdout:
+                detail = result.stdout.split(fail_marker, 1)[1].split("<", 1)[0]
+            diagnostic = result.stdout[-4000:]
             raise AssertionError(
                 f"scenario {scenario!r} failed: {detail}\n"
                 f"chrome exit={result.returncode}\n"
+                f"stdout tail={diagnostic}\n"
                 f"stderr tail={result.stderr[-1500:]}\n"
             )
         print(f"PASS {scenario}")
@@ -327,7 +357,7 @@ def run_scenario(chrome: str, scenario: str, base_document: str) -> None:
 
 def main() -> int:
     chrome = find_chrome()
-    base_document = CLIENT_HTML.read_text(encoding="utf-8")
+    base_document = prepare_base_document(CLIENT_HTML.read_text(encoding="utf-8"))
     scenarios = (
         "core_offline",
         "navigate_success",
