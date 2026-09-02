@@ -70,11 +70,11 @@ Material unexpected evidence becomes an `F-XXX` finding before task scope/order 
 - **T-036:** real destination-restricted browser-facing loopback SOCKS5 proxy with local domain/port policy enforcement, live handshake verification, loopback-only plaintext sidecar upstream, and live endpoint revocation on transport/sidecar failure.
 - **T-037:** Origin agent maintaining persistent authenticated outbound reverse sessions to independent Relay A and Relay B without public inbound ports / CGNAT traversal, multiplexed stream dispatching, loopback-only data gateway forwarding, and automatic reconnect resilience.
 - **T-040:** Safe pure-Rust RFC 8032 Ed25519 & FIPS 180-4 SHA-512 cryptographic engine, atomic disk-persisted `PersistentFileDeviceKeyStore` with memory zeroing, corruption fail-closed verification, and Proof-of-Possession signature contract compatible with Go server.
+- **T-041:** Real Servo embedding adapter and BrowserCapsule with strict fail-closed loopback proxy enforcement, subresource policy verification, lifecycle preservation, and document rendering qualification (SPA, CSR, SSR).
 
 ## Still not production-qualified
 
 - Real primary/fallback protected transports and independent Relay A/B.
-- Real Servo/browser runtime forced through protected proxy.
 - Private SecureAcces provider in its own qualified `main`.
 - SecureAcces-owned durable state + recovery qualification.
 - SecureAcces-backed administrator management authorization.
@@ -126,7 +126,7 @@ Historical F-001..F-028 remain in Git history.
 
 - **F-029 — False convergence:** RESOLVED by T-034.
 - **F-030 — Synthetic client transport readiness:** CONTAINED by T-035; real provider → T-036.
-- **F-031 — No real Servo/proxied runtime:** OPEN / Critical → T-041.
+- **F-031 — No real Servo/proxied runtime:** RESOLVED by T-041.
 - **F-032 — Synthetic production keystore:** RESOLVED by T-040.
 - **F-033 — Real SecureAcces production authority absent:** OPEN / Critical → T-052. Public bridge is qualified; private provider is not yet qualified/promoted.
 - **F-034 — Origin reverse connectivity absent:** OPEN / Critical → T-037.
@@ -150,7 +150,25 @@ Status vocabulary: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS
 
 ## DONE foundations
 
-T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037 and **T-040** are DONE under their recorded scopes.
+T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037, T-040 and **T-041** are DONE under their recorded scopes.
+
+### T-041 — Real Servo runtime + enforced protected proxy
+**Status:** DONE · **Priority:** P0
+
+Evidence chain:
+- Servo embedding adapter (`ServoEmbeddingAdapter`) and configuration requiring strict loopback proxy attachment.
+- Fail-closed startup: missing or non-loopback proxy address immediately halts initialization and transitions engine to `BrowserState::Failed` (`I-003`, `I-004`, `I-006`).
+- `BrowserCapsule` integration executing and validating subresource network fetches (`execute_proxied_fetch`) against `NavigationPolicy`.
+- Disallowed scheme rejection (e.g. `file://`, `data:`, `javascript:`) for both primary navigation and subresources.
+- Lifecycle preservation (Android pause, resume, low-memory cache clear, activity recreation with URL state rehydration).
+- Qualification runner (`QualificationRunner`) verifying SPA, CSR, and SSR rendering workflows over the secure loopback proxy.
+- Integration test suite in `crates/webgate-browser/tests/proxy_enforcement.rs` (5/5 PASS).
+
+Qualified contract:
+- Protected corporate web content executes strictly inside `BrowserCapsule` powered by Servo (`I-001`).
+- No silent fallback to unproxied system browsers under any circumstance (`I-004`).
+- All network fetches (document and subresources) are bounded by loopback proxy and navigation policy (`I-006`).
+- Platform lifecycle transitions fail closed if proxy connectivity is lost upon resume.
 
 ### T-040 — Production platform key stores
 **Status:** DONE · **Priority:** P0
@@ -246,9 +264,6 @@ Public bridge is qualified in WebGate. Private RED `c0a0f82c...` and candidate `
 
 Replace shared-token-only management with request-scoped SecureAcces principal/actor authorization. Shared token may remain only as explicitly scoped bootstrap/recovery factor. Converge privileged action + durable audit into a fail-closed management transaction where feasible.
 
-### T-041 — Real Servo runtime + enforced protected proxy
-**Status:** TODO · **Priority:** P0
-
 ### T-042 — Real dual-transport / dual-relay failover
 **Status:** TODO · **Priority:** P1
 
@@ -283,8 +298,7 @@ Historical T-004/T-005/T-008/T-010/T-011/T-012/T-013/T-014/T-015/T-016/T-019/T-0
 ```text
 T-049 DONE → T-050 DONE → T-052(private) → T-051 → T-038 convergence ───────────────┐
 T-039 DONE ──────────────────────────────────────────────────────────────────────────┼→ T-045
-T-035 DONE → T-036 DONE → T-037 DONE → T-040 DONE ───────────────────────────────────┤
-             ├→ T-041 ───────────────────────────────────────────────────────────────┤
+T-035 DONE → T-036 DONE → T-037 DONE → T-040 DONE → T-041 DONE ───────────────────────┤
              └→ T-042 ───────────────────────────────────────────────────────────────┘
 T-044 must land before T-045 final qualification.
 T-048 is independent High/P1 work.
@@ -294,10 +308,9 @@ T-045 → T-046 → T-047.
 Priority now:
 1. check private SecureAcces executable CI once;
 2. if available: finish T-052 → T-051;
-3. T-041 (Real Servo runtime + enforced protected proxy);
-4. T-042 (Real dual-transport / dual-relay failover);
-5. T-044/T-048;
-6. T-045 → T-046 → T-047.
+3. T-042 (Real dual-transport / dual-relay failover);
+4. T-044/T-048;
+5. T-045 → T-046 → T-047.
 
 ---
 
