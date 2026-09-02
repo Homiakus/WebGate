@@ -845,3 +845,458 @@ WebGate next-generation convergence requires all of the following:
 - release-binary cross-process adversarial qualification T-061 passes;
 - docs/evidence are reconciled by T-062;
 - the exact final state reaches `main` without force push and its available CI/qualification evidence is recorded.
+
+---
+
+# 14. Commercialization and productization execution program
+
+This program is part of the same living plan but does **not** weaken or replace the technical/security convergence contract above. Commercial readiness is downstream of security truth. A product, pricing page, sales document or README may not use a stronger readiness claim than the strongest qualification gate actually passed.
+
+## Commercial positioning hypothesis
+
+WebGate should not be positioned primarily as a VPN replacement. The highest-value product hypothesis is:
+
+> **Self-hosted private enterprise workspace for controlled access to internal web applications without exposing the Origin publicly and without routing the whole operating system through a VPN.**
+
+Primary product attributes to validate:
+
+```text
+application-scoped access
+private Origin behind NAT/CGNAT
+no inbound port-forwarding requirement
+WebGate-owned controlled browser path
+Zero-Trust account/device/service authorization
+self-hosted control and data-plane option
+Android/field-device applicability
+multiple independent protected paths
+strong auditability and fail-closed behavior
+```
+
+Primary ICP hypotheses, in priority order for validation rather than assumed truth:
+
+1. Industrial/manufacturing organizations with internal web HMI, MES, ERP, dashboards, documentation and engineering systems.
+2. Laboratories/regulated technical organizations with private LIMS, reports, monitoring and internal portals.
+3. Organizations granting constrained access to contractors, suppliers or unmanaged/BYOD endpoints.
+4. Distributed branches/sites whose local application server is behind CGNAT or dynamic addressing.
+5. Android/field/warehouse/service-device workflows where a controlled private workspace is preferable to a full-device VPN.
+
+Explicit non-targets for the first commercial product:
+
+- generic consumer VPN;
+- unrestricted Internet proxy;
+- general-purpose L3 corporate network replacement;
+- full PAM replacement for SSH/database/Kubernetes workflows;
+- global consumer censorship-circumvention service as the core business proposition.
+
+## Product invariants
+
+- **P-I-001 Evidence-bound claims:** `Production`, `Enterprise`, `HA`, `E2E`, `Zero Trust`, `offline-capable` and similar claims require the exact owning technical/product gate to be DONE. README/website/demo wording cannot outrun the plan.
+- **P-I-002 Renderer-independent security boundary:** adding a compatibility browser engine may change rendering implementation but may not bypass WebGate navigation policy, loopback/restricted transport, device identity, service authorization, audit or fail-closed behavior.
+- **P-I-003 Explicit compatibility:** supported applications/browser engines are represented by a tested compatibility matrix. Unsupported behavior is reported explicitly; there is no silent insecure browser fallback.
+- **P-I-004 Fast reversible onboarding:** the standard pilot path must install, enroll, register one private service, authorize one user/device and open the first page without inbound NAT changes; uninstall/rollback must be documented and leave no hidden network changes.
+- **P-I-005 Enterprise lifecycle:** managed deployment, upgrade, rollback, credential rotation, backup/restore, observability, audit export and support diagnostics are first-class product behavior, not manual tribal knowledge.
+- **P-I-006 Security-core transparency:** Apache-2.0/open-source security foundations must not be intentionally crippled to force payment. Commercial differentiation should primarily come from operations, fleet management, enterprise integration, support/SLA and hosted services.
+- **P-I-007 Pilot evidence before GA:** general availability requires repeatable evidence from representative non-developer deployments, not only repository-local integration tests.
+- **P-I-008 Privacy-bounded telemetry:** product analytics/diagnostics are opt-in or explicitly administrator-controlled, minimize content/identity collection, and never require sending protected application payloads to a vendor service.
+
+## Product/commercial findings accepted 2026-09-02
+
+- **P-F-001 — Category ambiguity:** HIGH → T-063. If marketed as "another VPN", WebGate competes directly with mature mesh/ZTNA products while hiding its browser/application-scoped differentiation.
+- **P-F-002 — Browser compatibility is the largest product-fit risk:** HIGH → T-064. Servo control is strategically valuable, but commercial adoption requires measured real-world web application compatibility and a safe compatibility strategy.
+- **P-F-003 — Time-to-first-service is not yet a commercial acceptance gate:** HIGH → T-065. Security architecture is sophisticated, but customers will judge installation and first-value time before appreciating internal design quality.
+- **P-F-004 — No external pilot evidence:** HIGH → T-066. Repository tests cannot demonstrate administrator usability, application compatibility, deployment friction, support cost or purchasing value.
+- **P-F-005 — Enterprise operational surface is incomplete as a product:** HIGH → T-067. SSO/directory integration, managed endpoint deployment, SIEM integration, fleet operations, upgrades and supportability materially affect enterprise purchase decisions.
+- **P-F-006 — Apache-2.0 code alone is not a durable commercial moat:** MEDIUM/HIGH → T-068. Monetization must rely on product operations, enterprise management, hosted relay/control services, integrations, support, SLA and brand/trust rather than artificial binary scarcity.
+- **P-F-007 — Readiness wording can exceed current extended architecture truth:** HIGH → T-069. Historical original-scope convergence cannot justify `Enterprise Qualified` for the next-generation/commercial product.
+
+---
+
+## T-063 — Product positioning, ICP and competitive validation
+**Status:** READY · **Priority:** P1 product · **Owns:** P-F-001
+
+### Deliverables
+
+- Define one canonical product category/name and one-sentence value proposition.
+- Build a competitive capability matrix against at least representative ZTNA/mesh, private-tunnel and enterprise-browser approaches.
+- Separate table-stakes capabilities from true differentiation.
+- Define the top 3 ICP hypotheses with buyer, administrator and end-user personas.
+- Define top 10 jobs-to-be-done and top 10 reasons a prospect would reject WebGate.
+- Interview/observe representative administrators/users where accessible; record evidence separately from assumptions.
+- Define `do not build` boundaries so WebGate does not expand into generic VPN/PAM/SWG scope without evidence.
+
+### Acceptance
+
+A prospective customer can understand within one minute:
+
+```text
+what WebGate protects
+why it is not just a VPN
+what must be installed
+where traffic/control state lives
+what remains self-hosted
+which problem it replaces or simplifies
+```
+
+The product narrative must stay compatible with P-I-001 and actual implemented state.
+
+---
+
+## T-064 — Browser compatibility strategy and qualification matrix
+**Status:** READY · **Priority:** P0 product risk · **Protects:** P-I-002, P-I-003
+
+### Goal
+
+Preserve Servo as a high-control secure engine while eliminating browser-engine compatibility as a hidden blocker to commercial adoption.
+
+### Required architecture decision
+
+Evaluate and qualify a two-mode strategy unless evidence proves one engine is sufficient:
+
+```text
+STRICT mode
+  Servo
+  maximum WebGate-owned rendering/network control
+  for qualified internal applications
+
+COMPAT mode
+  hardened Chromium/CEF/WebView2-or-equivalent adapter where platform permits
+  same WebGate proxy/navigation/device/auth/audit boundary
+  no direct network fallback
+```
+
+This is not permission to launch the system browser. A compatibility engine is acceptable only if WebGate owns and verifies its network path and lifecycle strongly enough to preserve P-I-002.
+
+### Compatibility corpus
+
+Build automated and manual qualification for representative classes:
+
+- static/SSR applications;
+- SPA/CSR React/Vue/Angular-like applications;
+- WebSocket/SSE applications;
+- file upload/download workflows;
+- large tables/canvas/chart-heavy dashboards;
+- authentication redirects/OIDC flows where permitted;
+- clipboard/download restrictions when policy exists;
+- responsive/mobile web applications;
+- representative internal engineering, monitoring, ERP/LIMS-like and documentation applications that can legally be tested.
+
+For every application/test case record:
+
+```text
+engine
+platform
+WebGate version
+result PASS/PARTIAL/FAIL
+known workaround
+security-boundary result
+performance notes
+```
+
+### Exit contract
+
+- compatibility claims are machine-readable/versioned where practical;
+- no engine can bypass the restricted proxy;
+- switching engine never weakens service authorization or audit;
+- application incompatibility produces explicit diagnostics instead of silent external-browser fallback.
+
+---
+
+## T-065 — 15-minute first-service onboarding
+**Status:** TODO · **Priority:** P1 product · **Depends on:** stable T-053/T-054 identity/routing contracts · **Owns:** P-F-003 · **Protects:** P-I-004
+
+### Target journey
+
+From clean supported systems, a competent administrator following the standard pilot path should be able to reach first protected value with a target of **≤15 minutes**, excluding OS/package download time outside WebGate control:
+
+```text
+install Origin/server package
+  ↓
+enroll Origin identity
+  ↓
+connect/validate relay path
+  ↓
+register existing local HTTP service
+  ↓
+create/import user + device authorization
+  ↓
+generate safe invite/deep link
+  ↓
+install/open WebGate client
+  ↓
+first authorized private page
+```
+
+No inbound router/NAT changes are allowed in the standard path.
+
+### Required product work
+
+- one canonical installer/launcher per Tier-1 platform;
+- interactive setup wizard plus non-interactive automation mode;
+- preflight network, clock, certificate, loopback-service and authority checks;
+- automatically generated but reviewable safe defaults;
+- QR/deep-link enrollment for Android where secure;
+- deterministic diagnostics when relay/authority/service is unreachable;
+- `doctor` output understandable by support without secrets;
+- uninstall/cleanup and documented rollback;
+- idempotent reinstall/upgrade path;
+- no need for users to understand relay ports, routes or transport internals in ordinary operation.
+
+### Qualification
+
+Run clean-machine onboarding repeatedly and record median/p95 time, error rate, steps requiring manual intervention and top failure causes. The 15-minute target may be changed only from measured evidence, not to conceal friction.
+
+---
+
+## T-066 — Design-partner and pilot evidence program
+**Status:** TODO · **Priority:** P1 commercial · **Depends on:** T-038, T-053, T-054, T-055, T-064, T-065 · **Owns:** P-F-004 · **Protects:** P-I-007, P-I-008
+
+### Pilot stages
+
+```text
+Stage A — internal/lab dogfood
+Stage B — trusted technical design partner
+Stage C — controlled external business pilot
+Stage D — repeatable multi-customer pilot template
+```
+
+Each external pilot must have explicit scope and must not be represented as GA/Enterprise Qualified.
+
+### Minimum pilot diversity
+
+Seek evidence across at least three materially different scenarios, for example:
+
+1. private internal web application behind CGNAT/dynamic IP;
+2. contractor/BYOD restricted access;
+3. Android/field or industrial-site workflow.
+
+### Evidence collected
+
+- setup time and administrator intervention;
+- application compatibility;
+- daily active use/session success;
+- reconnect/failover behavior;
+- support tickets by root cause;
+- upgrade/rollback success;
+- CPU/memory/bandwidth cost at client/relay/origin;
+- user task completion versus previous access method;
+- security/admin objections from customer review;
+- willingness-to-pay/packaging feedback without treating stated intent as booked revenue.
+
+Protected application contents are not collected as product analytics.
+
+### Exit contract
+
+At least three representative pilot deployments can be reproduced from documented procedures, with known issues, measured support burden and explicit evidence of what value users/admins received.
+
+---
+
+## T-067 — Enterprise operations and integration surface
+**Status:** TODO · **Priority:** P1 commercial · **Depends on:** T-038 and stable client/origin management contracts · **Owns:** P-F-005 · **Protects:** P-I-005
+
+### Required enterprise capabilities or explicit integrations
+
+- OIDC/SAML SSO through SecureAcces or a defined identity boundary;
+- SCIM/directory lifecycle where appropriate;
+- group/role-to-service policy mapping;
+- managed device enrollment and revocation;
+- MDM/config-profile deployment for supported endpoint platforms where practical;
+- signed policy/config rollout rings;
+- staged update, rollback and version fleet visibility;
+- relay/origin/client health inventory;
+- HA control-plane deployment documentation;
+- backup/restore drill for authoritative state;
+- JSON/CEF/syslog-or-equivalent audit/SIEM export without secret leakage;
+- configurable retention/export boundaries;
+- support bundle generation with aggressive secret/content redaction;
+- certificate/node-key rotation workflows;
+- maintenance-mode and break-glass semantics with durable audit;
+- capacity/SLO dashboards for relay and authority fleet.
+
+### Acceptance
+
+A customer should be able to operate more than one Origin, more than one relay and a fleet of devices without SSHing into every machine for normal lifecycle actions.
+
+---
+
+## T-068 — Commercial packaging, licensing and service model
+**Status:** TODO · **Priority:** P2 commercial · **Depends on:** T-063, informed by T-066 · **Owns:** P-F-006 · **Protects:** P-I-006
+
+Current Apache-2.0 licensing remains the baseline unless a separate deliberate legal/compatibility decision is made. This task must not silently relicense existing contributions.
+
+### Packaging hypothesis to test
+
+```text
+Community
+  core client/origin/relay
+  baseline self-hosted access
+  transparent security foundations
+
+Business
+  fleet management
+  SSO/directory integrations
+  advanced policy/audit
+  managed updates
+  operational dashboards
+
+Enterprise
+  HA patterns
+  HSM/KMS/PKI integrations
+  air-gapped/offline deployment support
+  compliance evidence packs
+  premium support/SLA
+  advanced SIEM/MDM integrations
+
+Managed services (optional)
+  hosted relay fleet
+  hosted/managed control components where architecture/privacy permits
+  managed upgrades/monitoring
+```
+
+### Commercial model work
+
+- evaluate per-user, per-device, per-active-seat, per-site and managed-relay pricing units;
+- quantify relay bandwidth/compute/support cost so pricing is not structurally loss-making;
+- model gross-margin sensitivity for managed relay traffic;
+- define support tiers, response targets and exclusions;
+- define trademark/brand policy and commercial distribution rules compatible with Apache-2.0;
+- keep security-critical interoperability and export/backup paths free from deliberate lock-in.
+
+No price is considered validated until design-partner/pilot evidence exists.
+
+---
+
+## T-069 — Commercial launch and claim gate
+**Status:** TODO · **Priority:** P0 commercial final gate · **Depends on:** T-061, T-062, T-064, T-065, T-066, T-067, T-068 · **Owns:** P-F-007 · **Protects:** P-I-001..P-I-008
+
+### Release vocabulary
+
+Use explicit maturity levels:
+
+```text
+Experimental
+Technical Preview
+Pilot
+Production
+Enterprise Qualified
+```
+
+Minimum interpretation:
+
+- **Experimental:** research/prototype behavior; no production claim.
+- **Technical Preview:** usable for controlled evaluation; incomplete production contract is visible.
+- **Pilot:** explicitly scoped real deployment with support and known limitations.
+- **Production:** T-061 technical gate and owning production dependencies are DONE; supported deployment contract exists.
+- **Enterprise Qualified:** Production plus T-064/T-065/T-066/T-067/T-068/T-062 evidence and this T-069 launch review are DONE.
+
+### Final launch review
+
+Before `Enterprise Qualified`:
+
+- reconcile README, website, installer and release notes with actual gate state;
+- publish supported platform/browser/application matrix;
+- publish reference production architecture and threat model;
+- publish support/upgrade/rollback/backup procedures;
+- verify no standard installation requires public Origin ports;
+- verify standard client operation does not alter OS default route;
+- verify at least one clean install-to-first-service onboarding run meets the accepted onboarding SLO;
+- review pilot evidence and unresolved high-severity product findings;
+- review licensing/SBOM/third-party notices and commercial distribution rights;
+- establish vulnerability intake/security response path;
+- establish release signing/key-custody procedure;
+- establish customer-facing incident/support escalation process;
+- explicitly list unsupported/non-goal scenarios.
+
+No marketing statement may promote the product above the achieved maturity level.
+
+---
+
+## Product/commercial dependency lane
+
+This lane runs in parallel but cannot overtake the security gates it depends on:
+
+```text
+POSITIONING / PRODUCT
+T-063 ───────────────┬→ T-068 ──────────────────────────────┐
+                    │                                       │
+T-064 ───────────────┼→ T-066 ──────────────────────────────┤
+                    │                                       │
+T-053 → T-054 ─→ T-065 ┘                                   │
+T-038 + T-055 + T-064 + T-065 ─→ T-066                     │
+T-038 ──────────────────────────→ T-067                     │
+                                                            │
+TECHNICAL FINAL: T-061 + T-062 ─────────────────────────────┤
+                                                            ▼
+                                                     T-069 commercial gate
+```
+
+Commercial work must not interrupt the current security priority order. T-063 and T-064 can progress in parallel with T-053; T-065 can begin against stable contracts but cannot be qualified before the required secure identity/routing path exists.
+
+---
+
+## Product metrics and evidence dashboard
+
+Track trends, not vanity totals. At minimum:
+
+### Activation
+
+- install success rate by Tier-1 platform;
+- median/p95 time to first protected service;
+- percentage of standard deployments requiring manual firewall/NAT work (target: zero);
+- percentage requiring manual config-file editing;
+- enrollment failure reasons.
+
+### Compatibility
+
+- tested application classes by engine/platform;
+- PASS/PARTIAL/FAIL compatibility rate;
+- regressions per release;
+- percentage of deployments requiring COMPAT engine;
+- zero insecure external-browser fallback events.
+
+### Reliability
+
+- successful session establishment rate;
+- reconnect/failover success;
+- crash-free client sessions;
+- origin/relay availability evidence;
+- upgrade and rollback success rate.
+
+### Operations/support
+
+- support incidents per active deployment;
+- median time to diagnose from `doctor`/support bundle;
+- top recurring administrator errors;
+- percentage of lifecycle actions possible without direct machine shell access.
+
+### Commercial validation
+
+- pilots started/completed;
+- pilots converted to paid usage when/if commercial offering exists;
+- dominant ICP/use case by observed usage;
+- primary replacement/alternative named by customers;
+- support and relay cost per active deployment;
+- price/package objections and lost-pilot reasons.
+
+Do not optimize metrics by weakening fail-closed/security behavior or by collecting protected application content.
+
+---
+
+# 15. Commercial convergence criterion
+
+Technical convergence in Section 13 is necessary but not sufficient for a commercially mature WebGate.
+
+`Enterprise Qualified` commercial convergence requires:
+
+- T-069 DONE;
+- T-061 technical next-generation qualification DONE;
+- T-062 documentation/evidence reconciliation DONE;
+- T-064 browser compatibility strategy qualified with no security-boundary escape;
+- T-065 repeatable onboarding measured on clean supported systems;
+- T-066 representative external pilot evidence exists;
+- T-067 enterprise lifecycle/operations contract exists;
+- T-068 packaging/licensing/support model is internally coherent and legally reviewable;
+- no unresolved Critical product/security finding;
+- unresolved High findings are either fixed or explicitly accepted with visible scope and customer impact;
+- product and README claims match the actual maturity level;
+- a new customer can understand deployment ownership, data paths, trust boundaries, backup/upgrade responsibilities and unsupported scenarios before purchase/deployment;
+- the exact commercial release state is tagged/signed and backed by the available technical qualification evidence.
