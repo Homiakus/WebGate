@@ -1,0 +1,47 @@
+name: browser-truth-diagnostic
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/browser-truth-diagnostic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, Node 24
+      - name: Browser inventory
+        shell: bash
+        run: |
+          {
+            command -v google-chrome || true
+            command -v google-chrome-stable || true
+            command -v chromium || true
+            command -v chromium-browser || true
+            google-chrome --version || true
+          } > browser-inventory.log 2>&1
+          cat browser-inventory.log
+      - name: Capture browser qualification
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/test_client_ui_browser.py > browser-truth.log 2>&1
+          code=$?
+          echo "EXIT=$code" >> browser-truth.log
+          cat browser-truth.log
+          exit 0
+      - name: Upload diagnostic
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: browser-truth-diagnostic
+          path: |
+            browser-inventory.log
+            browser-truth.log
+          if-no-files-found: error
