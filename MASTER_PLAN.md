@@ -1300,3 +1300,599 @@ Technical convergence in Section 13 is necessary but not sufficient for a commer
 - product and README claims match the actual maturity level;
 - a new customer can understand deployment ownership, data paths, trust boundaries, backup/upgrade responsibilities and unsupported scenarios before purchase/deployment;
 - the exact commercial release state is tagged/signed and backed by the available technical qualification evidence.
+
+---
+
+# 16. Total resilience audit and execution program
+
+This section extends the target beyond ordinary HA. “Total resilience” is an engineering objective meaning **survival of every explicitly modeled single failure and of selected correlated failures without violating security invariants**. It is not a claim that software can survive arbitrary global Internet loss, destruction of all trust roots, simultaneous loss of every deployment site, or failure of a single unreplicated protected backend that is outside WebGate’s control.
+
+T-061 remains the next-generation security/release-binary gate. T-078 becomes the final **system-resilience qualification gate**. From this section onward, `Enterprise Qualified` under T-069 additionally depends on T-078.
+
+## 16.1 Resilience invariants
+
+- **R-I-001 No unacknowledged single point of failure:** every production-critical component is either replicated across a materially independent failure domain or explicitly declared as a deployment-level SPOF with user-visible impact.
+- **R-I-002 Correlated-failure awareness:** replicas count as independent only when provider, ASN/network, region/site, power/control dependency, transport family, software rollout ring and administrative credential blast radius are sufficiently independent.
+- **R-I-003 Stable recovery:** reconnect/retry behavior uses bounded exponential backoff with jitter, retry budgets and circuit breaking; a mass outage must not create synchronized reconnect storms.
+- **R-I-004 Backpressure before collapse:** every public or fan-in boundary has bounded queues, concurrency, memory, bandwidth and work admission. Overload sheds work before exhausting process/host resources.
+- **R-I-005 Readiness is end-to-end:** a PID, open socket or successful process spawn is never sufficient for `Ready`. Readiness proves that the component can complete the required protected operation through its downstream dependencies.
+- **R-I-006 Graceful drain:** planned restart/update/key rotation removes a node from new work, drains or safely resets existing sessions, and only then terminates where protocol semantics allow.
+- **R-I-007 Deterministic degraded modes:** every dependency loss maps to an explicit state such as `Ready`, `Degraded`, `ReadOnly`, `Offline`, or `RecoveryRequired`; no hidden fallback may weaken security.
+- **R-I-008 State continuity:** durable state has explicit RPO/RTO, consistent backup/restore, corruption detection and a qualified enterprise HA strategy. Network filesystems are not used for shared live SQLite unless explicitly proven safe; multi-writer semantics require a storage design built for them.
+- **R-I-009 Split-brain prevention:** active/passive or replicated control-plane components use fencing/leases/consensus semantics appropriate to their state. Two authorities may not both mutate supposedly singleton state merely because a partition occurred.
+- **R-I-010 Reversible releases:** client, relay, Origin, server, policy and schema changes support staged rollout, compatibility windows and automatic/manual rollback without accepting unsigned or older-disallowed artifacts.
+- **R-I-011 Time resilience:** security expiry uses wall clock only where required; retry/timeout logic uses monotonic time. Clock skew is detected, bounded and never silently extends credentials/leases indefinitely.
+- **R-I-012 Bulkheads:** relay, Origin, authority, protected-service and tenant failures are isolated so one unhealthy dependency or tenant cannot consume all worker, connection, memory or retry capacity.
+- **R-I-013 Observability independence:** health and diagnostics remain locally available when central telemetry is unavailable. Telemetry loss must not block the data plane or trigger insecure behavior.
+- **R-I-014 Operator-error resilience:** destructive or high-blast-radius operations require preview/validation, scoped authorization, durable audit, safe defaults and rollback/recovery paths.
+- **R-I-015 Trust-root resilience:** release, node and authority key loss/rotation/revocation have documented recovery paths that do not require disabling signature verification or accepting arbitrary new roots.
+- **R-I-016 Chaos evidence:** a resilience capability is not considered qualified until fault injection or a real failure demonstrates the expected bounded behavior.
+
+## 16.2 Findings accepted from the 2026-09-02 resilience audit
+
+- **R-F-001 — Fixed reconnect cadence can produce herd behavior:** HIGH → T-071. `OriginReverseAgent` currently defaults to a fixed reconnect interval and waits that interval after failure. Large fleets can synchronize after relay/network recovery.
+- **R-F-002 — Heartbeat liveness is incomplete:** HIGH → T-071. Origin sends Ping and accepts Pong, but the current loop does not explicitly require a Pong within a bounded heartbeat-ack deadline before declaring the relay dead.
+- **R-F-003 — Relay idle lifecycle is under-enforced:** HIGH → T-071/T-054. `IdleTimeout` exists in relay configuration and activity is tracked, but the inspected server path does not yet provide a complete idle-session/stream reaper contract.
+- **R-F-004 — Process `Running` can precede application readiness:** CRITICAL runtime correctness → T-072. `ProcessManager` marks a service running after successful `cmd.Start()`/runtime-state write; it does not prove that the protected HTTP service is actually ready.
+- **R-F-005 — Child-process supervision lacks restart budgets and backoff:** HIGH → T-072. Exit is observed, but there is no qualified crash-loop policy, restart budget, startup timeout or escalating degraded state.
+- **R-F-006 — Stop/restart is not graceful:** HIGH → T-072. Current process stop uses immediate process kill where a real child exists; no generic drain/TERM/grace-period/KILL sequence is qualified.
+- **R-F-007 — Local SQLite is durable but still node-local:** HIGH for enterprise HA → T-073. WAL/FULL/checksums and backup/restore protect local durability, but local storage alone does not make the control state survive complete host/site loss with near-zero RTO.
+- **R-F-008 — Backend service availability is outside current relay HA guarantee:** HIGH → T-074. Multiple relays do not help when the only Origin/backend instance or its site is down.
+- **R-F-009 — Multi-Origin service failover semantics are not yet defined:** HIGH → T-074. Active-active vs active-passive routing, readiness, session affinity, drain and fencing must be explicit before multiple Origins can be called HA.
+- **R-F-010 — Signed releases exist without full fleet-safe rollout:** HIGH → T-075. Signing/rollback protection is not equivalent to canary rollout, compatibility gating, health-based automatic rollback and schema rollback safety.
+- **R-F-011 — Clock is a security and availability dependency:** MEDIUM/HIGH → T-076. Certificates, signed leases, challenges and directory expiry can fail simultaneously under large time skew; the product needs bounded clock diagnostics/recovery semantics.
+- **R-F-012 — Central telemetry/support cannot be a hidden runtime dependency:** MEDIUM → T-077. Resilience requires local health snapshots, event history and support evidence even when an external monitoring path is down.
+- **R-F-013 — Current qualification kills individual components but does not yet run sustained correlated-failure game days:** HIGH → T-078.
+
+---
+
+## T-070 — Formal resilience model, service classes and SLO/RTO/RPO budgets
+**Status:** READY · **Priority:** P0 architecture · **Owns:** resilience scope · **Protects:** R-I-001, R-I-002, R-I-007, R-I-008
+
+### Deliverables
+
+Define component and service availability classes rather than using one vague `HA` label.
+
+Suggested service classes:
+
+```text
+S0 — single-site / single-backend
+  transport redundancy may exist
+  backend/site loss causes outage
+
+S1 — redundant access path
+  ≥2 independent relays/transports
+  one Origin/backend site
+
+S2 — redundant Origin/backend
+  ≥2 Origins or backend instances
+  health-aware failover
+  explicit state/session semantics
+
+S3 — enterprise multi-failure-domain
+  ≥3 relay failure domains
+  ≥2 Origin/backend sites where application permits
+  HA authority/control state
+  tested DR and staged release
+```
+
+For each class define at minimum:
+
+- target monthly availability/SLO;
+- session-establishment success SLI;
+- maximum bounded failover interruption;
+- RTO for relay, Origin, server, authority and protected service;
+- RPO for WebGate state and SecureAcces state;
+- maximum accepted authorization-lease revocation delay;
+- which correlated failures are in/out of scope;
+- minimum independent failure domains;
+- capacity headroom after losing the largest failure domain.
+
+### Capacity rule
+
+A deployment is not resilient if surviving nodes cannot carry the load after failover. For N+1/N+2 designs, qualification must prove usable capacity after removing the largest required failure domain, not merely prove that another IP exists.
+
+---
+
+## T-071 — Connection recovery, anti-herd control and liveness hardening
+**Status:** TODO · **Priority:** P0 runtime · **Depends on:** T-053/T-054 contracts where applicable · **Owns:** R-F-001, R-F-002, R-F-003 · **Protects:** R-I-003, R-I-004, R-I-006, R-I-012
+
+### Origin reconnect controller
+
+Replace fixed retry timing with a bounded state machine:
+
+```text
+Healthy
+  ↓ failure
+FastRetry (small bounded attempts)
+  ↓
+Backoff(min..max, exponential, full jitter)
+  ↓ successful authenticated probe
+Warmup
+  ↓ stable interval
+Healthy
+```
+
+Requirements:
+
+- full/decorrelated jitter;
+- configurable min/max backoff;
+- reset backoff only after a stability window, not after one transient success;
+- independent retry budget per relay/failure domain;
+- global retry budget per Origin so simultaneous relay loss cannot create unbounded dials;
+- circuit breaker for repeatedly failing destinations;
+- signed-directory changes may wake a breaker only under bounded policy;
+- bounded Happy-Eyeballs/path racing, never infinite parallel dialing.
+
+### Liveness
+
+- Ping includes sequence/timestamp or equivalent liveness correlation.
+- Require Pong/ack before a bounded deadline.
+- Distinguish write success from peer responsiveness.
+- Apply read/write/idle deadlines that are compatible with long-lived sessions.
+- Reap orphan streams and dead sessions deterministically.
+- Heartbeat traffic itself is rate/budget bounded.
+
+### Storm qualification
+
+Simulate at least 1k logical Origins/clients where practical:
+
+```text
+relay outage 60 s
+all clients disconnected
+relay returns
+```
+
+Pass only if reconnect attempts spread over the configured recovery window, relay CPU/memory remain bounded, useful traffic recovers progressively, and no global lockstep retry spike occurs.
+
+---
+
+## T-072 — Production service supervision, readiness and graceful lifecycle
+**Status:** TODO · **Priority:** P0 runtime · **Owns:** R-F-004, R-F-005, R-F-006 · **Protects:** I-005, R-I-005, R-I-006, R-I-007, R-I-014
+
+### Architectural rule
+
+WebGate should not unnecessarily reimplement a full init/orchestrator. Prefer a pluggable `ServiceSupervisor` contract capable of using native managers where available:
+
+```text
+Linux      systemd or qualified container runtime
+Windows    Windows Service / SCM where appropriate
+macOS      launchd where appropriate
+embedded   explicit WebGate supervisor only where required
+```
+
+The existing direct `exec.Cmd` path may remain for development/simple deployments, but enterprise readiness requires a qualified supervisor backend.
+
+### Runtime states
+
+```text
+Stopped
+Starting
+Unready
+Ready
+Draining
+RestartBackoff
+Crashed
+FailedPermanent
+```
+
+### Required probes
+
+- startup probe: process may take time without being restarted prematurely;
+- liveness probe: detect wedged process;
+- readiness probe: prove the registered protected endpoint can serve the expected minimal request;
+- dependency-aware readiness where an application explicitly requires local dependencies;
+- probe failure thresholds/hysteresis to avoid flapping.
+
+`Ready` must not be emitted merely because a PID exists.
+
+### Restart policy
+
+- exponential backoff + jitter;
+- restart budget per time window;
+- max consecutive failures;
+- stable-run window before counter reset;
+- crash-loop → `FailedPermanent`/operator-visible degraded state;
+- never infinitely restart a deterministic configuration failure.
+
+### Graceful stop/update
+
+```text
+mark Unready/Draining
+stop new routed sessions
+wait bounded drain period
+send graceful termination
+wait grace period
+hard kill only after deadline
+verify process gone
+```
+
+---
+
+## T-073 — State HA, disaster recovery and control-plane continuity
+**Status:** TODO · **Priority:** P0 enterprise resilience · **Depends on:** T-039, T-052/T-051 for authority-owned state · **Owns:** R-F-007 · **Protects:** R-I-008, R-I-009, R-I-014
+
+### Deployment modes
+
+Do not force one storage architecture on every deployment.
+
+```text
+Standalone
+  local SQLite
+  qualified backups
+  explicit non-zero RTO/RPO
+
+Warm-standby
+  continuous/scheduled replicated snapshots or event stream
+  one writer
+  fenced promotion
+
+Enterprise HA
+  storage/control backend designed for replicated multi-node operation
+  consensus/transaction semantics appropriate to authoritative state
+```
+
+Do not place a live multi-writer SQLite database on an arbitrary network filesystem as an HA shortcut.
+
+### Required enterprise properties
+
+- explicit leader/writer ownership where singleton mutation exists;
+- fencing token/epoch on promotion;
+- stale writer cannot continue mutating after loss of leadership;
+- backup encryption and integrity verification;
+- off-host and off-site backup copies;
+- restore to clean host/site;
+- restore version/schema compatibility checks;
+- corruption detection before promotion;
+- periodic restore drills, not backup-success logs only;
+- documented RPO/RTO evidence.
+
+### DR scenarios
+
+```text
+server disk loss
+server host loss
+site loss
+backup store temporarily unavailable
+latest backup corrupt
+operator deletes state
+bad schema migration
+old standby attempts promotion
+partition creates two apparent leaders
+```
+
+Every scenario must have a deterministic outcome and no silent state resurrection/rollback.
+
+---
+
+## T-074 — Multi-Origin / multi-site protected-service resilience
+**Status:** TODO · **Priority:** P1/P0 for S2/S3 deployments · **Depends on:** T-054, T-055, T-057, T-070 · **Owns:** R-F-008, R-F-009 · **Protects:** R-I-001, R-I-002, R-I-005, R-I-009
+
+### Core principle
+
+Relay redundancy protects access infrastructure, not the application itself. A protected service that exists on one machine/site remains a SPOF.
+
+Add a service-cluster model such as:
+
+```text
+ServiceID
+  ├─ Origin A / Backend A / failure-domain A
+  ├─ Origin B / Backend B / failure-domain B
+  └─ optional Origin C / Backend C
+```
+
+Routing must use authority-owned service membership and WebGate-observed health; clients may not arbitrarily select an upstream.
+
+### Modes
+
+- active/passive for stateful applications requiring one active writer;
+- active/active for applications that are themselves safe for multi-site concurrency;
+- sticky-session mode where required;
+- stateless preference for new deployments where possible.
+
+WebGate must not pretend to solve an application database’s replication/consistency. The application’s own data-plane RPO/RTO is a separate declared dependency.
+
+### Failover requirements
+
+- only `Ready` Origins receive new sessions;
+- planned maintenance drains before route removal;
+- unplanned loss stops new routing within bounded detection time;
+- split-brain-sensitive active/passive service requires external/qualified fencing;
+- route recovery uses hysteresis to avoid ping-pong between sites;
+- capacity remains sufficient after losing one required Origin/site.
+
+---
+
+## T-075 — Fleet-safe releases, migrations and automatic rollback
+**Status:** TODO · **Priority:** P1 resilience · **Depends on:** T-046 and stable protocol/version contracts · **Owns:** R-F-010 · **Protects:** I-019, R-I-010, R-I-014
+
+### Rollout rings
+
+```text
+0 dev/CI
+1 internal canary
+2 small pilot ring
+3 partial production
+4 broad production
+```
+
+Requirements:
+
+- signed release + signed rollout policy;
+- maximum concurrent unavailable nodes per failure domain;
+- never upgrade all relays/Origins in one failure domain simultaneously;
+- protocol compatibility window across at least adjacent supported versions;
+- schema migrations classified as reversible or irreversible before rollout;
+- pre-migration backup/checkpoint for destructive migrations;
+- health gates on startup, relay connectivity, authorization and protected-service readiness;
+- automatic pause/rollback on statistically or absolutely significant regression;
+- rollback cannot violate anti-rollback security policy: recovery artifacts must be explicitly authorized/signed, not simply older binaries accepted ad hoc.
+
+### Negative qualification
+
+```text
+bad client release → canary catches before broad rollout
+bad relay release → remaining domains keep capacity
+bad Origin release → service route drains/falls back
+bad schema migration → restore/forward-fix path proven
+mixed versions during rollout → protocol remains safe or incompatible node stays unready
+release-signing service unavailable → existing version continues; no unsigned bypass
+```
+
+---
+
+## T-076 — Time, identity and trust-root continuity
+**Status:** TODO · **Priority:** P1 security/resilience · **Depends on:** T-053, T-055, T-059, T-060 · **Owns:** R-F-011 · **Protects:** R-I-011, R-I-015
+
+### Time model
+
+- use monotonic clocks for retry, heartbeat, drain and timeout measurement;
+- use wall clock only for externally meaningful validity windows;
+- detect large forward/backward wall-clock jumps;
+- expose `ClockUntrusted`/degraded diagnostics where credential validation cannot be trusted;
+- bounded clock-skew tolerance must never become indefinite expiry extension;
+- preserve last-known-good signed time/epoch hints only as auxiliary evidence, never as an unchecked authority.
+
+### Trust-root recovery
+
+Document and qualify:
+
+- relay/origin node-key rotation;
+- authority signing-key rotation;
+- release-signing-key rotation;
+- compromise revocation;
+- lost-key recovery;
+- offline root + online intermediate model where appropriate;
+- dual-control/quorum for highest-blast-radius trust-root replacement in enterprise deployments;
+- clients must never be instructed to “disable certificate/signature verification” as a recovery step.
+
+---
+
+## T-077 — Resilience observability, local diagnostics and bounded automation
+**Status:** TODO · **Priority:** P1 operations · **Depends on:** T-070 and runtime tasks as they land · **Owns:** R-F-012 · **Protects:** R-I-007, R-I-012, R-I-013
+
+### Required local signals
+
+Each component exposes a local, authentication-bounded health snapshot containing at least:
+
+```text
+component version
+identity/key id (non-secret)
+state Ready/Degraded/Offline/etc.
+active failure domain/path
+last successful end-to-end probe
+last failure reason/category
+retry/backoff state
+stream/session counts
+queue/memory/bandwidth budget use
+clock health
+configuration/policy version
+```
+
+### Event history
+
+- bounded local structured event ring survives enough restart context for diagnosis where appropriate;
+- important state transitions are durable/auditable without storing protected application payload;
+- external telemetry export is asynchronous and bounded;
+- telemetry outage cannot block protected traffic or consume unbounded disk/memory;
+- support bundle redacts tokens, private keys, application content and unnecessary personal data.
+
+### Automation guardrails
+
+Automatic recovery may:
+
+- restart a crashed local component within a budget;
+- remove an unready path from selection;
+- trigger failover;
+- rollback a canary under signed rollout policy.
+
+It may not automatically:
+
+- weaken authorization;
+- disable certificate validation;
+- expand allowed destinations;
+- promote an unverified backup;
+- create a new trust root;
+- keep retrying an overload indefinitely.
+
+---
+
+## T-078 — Chaos, correlated-failure and disaster qualification
+**Status:** TODO · **Priority:** P0 final resilience gate · **Depends on:** T-070..T-077 as applicable plus T-061 · **Owns:** R-F-013 · **Protects:** R-I-001..R-I-016
+
+### Qualification levels
+
+```text
+L1 component fault
+L2 single failure-domain loss
+L3 correlated infrastructure fault
+L4 control-plane/identity fault
+L5 disaster recovery / site loss
+```
+
+### Minimum fault matrix
+
+- kill/restart each relay independently;
+- lose an entire relay provider/ASN/region simulation;
+- kill all instances in one rollout ring;
+- drop UDP, then degrade TCP, then restore in different order;
+- packet loss, jitter, duplication, reordering and high RTT;
+- blackhole where TCP remains established but peer stops responding;
+- synchronized disconnect of 1k+ logical clients/Origins followed by recovery;
+- DNS unavailable/poisoned candidate;
+- directory mirror loss and stale directory replay;
+- clock jumps forward/backward;
+- node certificate expires/revokes during traffic;
+- authority unavailable, then recovery with/without valid lease mode;
+- local protected service hangs without exiting;
+- crash-looping protected service;
+- Origin host loss;
+- full Origin/backend site loss for S2/S3 service;
+- active/passive split-brain attempt;
+- state DB corruption;
+- latest backup corrupt, previous backup valid;
+- loss of primary control node;
+- failed leader fencing attempt;
+- disk full / read-only filesystem;
+- memory pressure and stream flood;
+- telemetry sink unavailable;
+- bad canary release;
+- partial mixed-version rollout;
+- operator applies invalid config/policy;
+- release-signing or directory-signing service unavailable.
+
+### Measured evidence
+
+For every scenario record:
+
+- detection time;
+- user-visible interruption;
+- whether established sessions survived;
+- failover/recovery time;
+- data/state loss against RPO;
+- capacity after failure;
+- whether any security invariant weakened;
+- automatic action taken;
+- operator action required;
+- time to full redundancy restoration.
+
+### Pass condition
+
+T-078 is DONE only when every failure required by the chosen service class meets its SLO/RTO/RPO and security invariants, and no tested failure causes direct-Internet fallback, authorization bypass, unbounded retry storm, unbounded resource growth, split-brain mutation or unsigned/unverified recovery.
+
+---
+
+## 16.3 Revised dependency order
+
+The resilience lane augments, rather than replaces, the existing security/product lanes:
+
+```text
+SECURITY CORE
+T-053 → T-054 → T-055 → T-056 → T-057 ───────────────┐
+                                                       │
+RUNTIME RESILIENCE                                     │
+T-070 → T-071                                          │
+T-070 → T-072                                          │
+T-070 + T-039 + SecureAcces lane → T-073              │
+T-054 + T-055 + T-057 + T-070 → T-074                 │
+T-046 + stable protocols → T-075                       │
+T-053 + T-055 + T-059 + T-060 → T-076                 │
+T-070 + runtime tasks → T-077                          │
+                                                       │
+T-061 security final + T-070..T-077 ─────────────────→ T-078 resilience final
+                                                       │
+                                                       └→ T-069 Enterprise Qualified gate
+```
+
+Current execution priority remains:
+
+1. T-053 security envelope.
+2. T-054 explicit routing/admission.
+3. T-055 E2E Client↔Origin security.
+4. **In parallel:** T-070 formal resilience model can start immediately because it is architecture/evidence work.
+5. T-071 and T-072 are the first runtime-resilience implementations after their required interfaces are stable.
+6. T-073/T-074 establish true host/site continuity rather than relay-only HA.
+7. T-075/T-076/T-077 harden release, trust and operations continuity.
+8. T-061 proves the next-generation protected path; T-078 then proves failure survival.
+9. T-069 cannot declare `Enterprise Qualified` before T-078 is DONE.
+
+---
+
+## 16.4 Resilience SLI dashboard
+
+Track at minimum by service class and failure domain:
+
+### Availability
+
+- successful protected session establishment ratio;
+- successful request ratio excluding explicit policy denies;
+- availability by relay/provider/Origin/service;
+- minutes in `Degraded` vs `Offline`;
+- redundancy margin: healthy independent paths/sites remaining.
+
+### Recovery
+
+- failure detection p50/p95/p99;
+- reconnect p50/p95/p99;
+- failover interruption p50/p95/p99;
+- time to full redundancy restoration;
+- reconnect-attempt distribution during fleet recovery;
+- circuit-breaker open/half-open counts.
+
+### Runtime supervision
+
+- startup/readiness duration;
+- liveness failures;
+- restart count and restart-budget exhaustion;
+- crash-loop detections;
+- graceful-drain completion ratio;
+- hard-kill fallback count.
+
+### State/DR
+
+- backup age;
+- verified restore age;
+- measured RPO in drills;
+- measured RTO in drills;
+- failed backup/restore validations;
+- leadership/fencing transitions.
+
+### Capacity
+
+- CPU/memory/network headroom after largest required failure domain is removed;
+- queue saturation;
+- rejected work due to admission limits;
+- stream/session count by tenant/origin/path;
+- disk headroom and telemetry spool usage.
+
+### Release resilience
+
+- canary rollback count;
+- mixed-version compatibility failures;
+- rollout pauses caused by health regression;
+- time to rollback;
+- percentage of fleet on each release ring/version.
+
+Do not claim `99.9%`, `99.99%` or similar availability until measured production/pilot evidence and the service-class scope make the number meaningful.
+
+---
+
+## 16.5 Total-resilience convergence criterion
+
+A deployment may be called `Resilience Qualified` only when:
+
+- its service class S0/S1/S2/S3 is explicit;
+- all required SPOFs are removed or visibly accepted for that class;
+- capacity remains sufficient after loss of the largest required failure domain;
+- reconnect/liveness logic is storm-resistant and bounded;
+- local services use real readiness/liveness and bounded supervision;
+- planned maintenance drains safely;
+- state RPO/RTO and restore evidence meet the selected class;
+- multi-Origin routing is qualified for S2/S3 where required;
+- updates are staged and rollback-qualified;
+- trust-root and clock failures have safe recovery semantics;
+- telemetry loss does not impair the protected path;
+- T-061 security qualification is DONE;
+- T-078 chaos/disaster matrix passes for all failures required by the selected class;
+- no tested resilience mechanism weakens I-001..I-044, P-I-001..P-I-008 or fail-closed behavior;
+- `Enterprise Qualified` additionally requires the commercial/product gates and T-069.
