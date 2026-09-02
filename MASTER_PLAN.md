@@ -68,11 +68,11 @@ Material unexpected evidence becomes an `F-XXX` finding before task scope/order 
 - **T-052 public half:** loopback-only remote authority bridge, exact AccountID/DeviceID binding, strict response validation, bounded bodies/timeouts, no redirects/proxy escape, control-secret scrubbing for child services.
 - **T-039:** WebGate-owned service/device/release/control/audit state is durable and recovery-qualified in `main` at `aad9be2ff541f12b2281e76dfae384175bdcefd8`; repeated main CI run `33473723354` passed all jobs.
 - **T-036:** real destination-restricted browser-facing loopback SOCKS5 proxy with local domain/port policy enforcement, live handshake verification, loopback-only plaintext sidecar upstream, and live endpoint revocation on transport/sidecar failure.
+- **T-037:** Origin agent maintaining persistent authenticated outbound reverse sessions to independent Relay A and Relay B without public inbound ports / CGNAT traversal, multiplexed stream dispatching, loopback-only data gateway forwarding, and automatic reconnect resilience.
 
 ## Still not production-qualified
 
 - Real primary/fallback protected transports and independent Relay A/B.
-- Origin reverse-connectivity/no-public-IP path.
 - Real Servo/browser runtime forced through protected proxy.
 - Platform-backed production device keys.
 - Private SecureAcces provider in its own qualified `main`.
@@ -150,7 +150,27 @@ Status vocabulary: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS
 
 ## DONE foundations
 
-T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039 and **T-036** are DONE under their recorded scopes.
+T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036 and **T-037** are DONE under their recorded scopes.
+
+### T-037 — Origin agent + reverse Relay A/B connectivity
+**Status:** DONE · **Priority:** P0
+
+Evidence chain:
+- Unit & integration tests in `pkg/origin` and `pkg/relay`.
+- Multi-relay end-to-end streaming (`TestOriginAgentDualRelayEndToEnd`).
+- Auto-reconnect on relay failure/restart (`TestOriginAgentAutoReconnectOnRelayRestart`).
+- Rejection of non-loopback target forwarding (`TestOriginAgentRejectsNonLoopbackTarget`).
+- Fail-closed client rejection when no Origin is connected (`TestRelayFailsClosedWhenNoOriginConnected`).
+- Rejection of unauthenticated Origin (`TestRelayRejectsUnauthenticatedOrigin`).
+- Concurrent multi-client multiplexing without cross-talk (`TestRelayConcurrentStreamsNoCrosstalk`).
+- Standalone Relay CLI binary (`cmd/webgate-relay`).
+
+Qualified contract:
+- Origin gateway operates strictly behind CGNAT/firewalls with zero inbound port-forwarding requirements (I-012).
+- Maintains concurrent persistent outbound reverse sessions to at least two independent relay domains (I-013).
+- Strict mutual authentication with cluster token before establishing reverse session.
+- Bridges incoming reverse streams strictly to loopback data gateway (`127.0.0.1:DataPort`).
+- Independent Relay server holding minimal state and failing closed on disconnected Origin.
 
 ### T-036 — Real destination-restricted loopback proxy + primary provider
 **Status:** DONE · **Priority:** P0
@@ -209,9 +229,6 @@ Public bridge is qualified in WebGate. Private RED `c0a0f82c...` and candidate `
 
 Replace shared-token-only management with request-scoped SecureAcces principal/actor authorization. Shared token may remain only as explicitly scoped bootstrap/recovery factor. Converge privileged action + durable audit into a fail-closed management transaction where feasible.
 
-### T-037 — Origin agent + reverse Relay A/B connectivity
-**Status:** TODO · **Priority:** P0
-
 ### T-040 — Production platform key stores
 **Status:** TODO · **Priority:** P0
 
@@ -252,7 +269,7 @@ Historical T-004/T-005/T-008/T-010/T-011/T-012/T-013/T-014/T-015/T-016/T-019/T-0
 ```text
 T-049 DONE → T-050 DONE → T-052(private) → T-051 → T-038 convergence ───────────────┐
 T-039 DONE ──────────────────────────────────────────────────────────────────────────┼→ T-045
-T-035 DONE → T-036 DONE → T-037 ─────────────────────────────────────────────────────┤
+T-035 DONE → T-036 DONE → T-037 DONE ────────────────────────────────────────────────┤
              ├→ T-040 ───────────────────────────────────────────────────────────────┤
              ├→ T-041 ───────────────────────────────────────────────────────────────┤
              └→ T-042 ───────────────────────────────────────────────────────────────┘
@@ -264,9 +281,9 @@ T-045 → T-046 → T-047.
 Priority now:
 1. check private SecureAcces executable CI once;
 2. if available: finish T-052 → T-051;
-3. if still externally blocked: execute T-037 (Origin agent + reverse Relay A/B connectivity);
-4. T-040 → T-041;
-5. T-044/T-042/T-048;
+3. T-040 (Production platform key stores) → T-041 (Real Servo runtime + enforced protected proxy);
+4. T-042 (Real dual-transport / dual-relay failover);
+5. T-044/T-048;
 6. T-045 → T-046 → T-047.
 
 ---
@@ -288,8 +305,8 @@ cargo deny check --all-features
 cd server && go mod tidy -diff
 cd server && go vet ./...
 cd server && go test ./...
-cd server && CGO_ENABLED=0 go test ./pkg/persistence ./pkg/registry
-cd server && CGO_ENABLED=0 go build ./cmd/webgate-server
+cd server && CGO_ENABLED=0 go test ./pkg/persistence ./pkg/registry ./pkg/origin ./pkg/relay
+cd server && CGO_ENABLED=0 go build ./cmd/webgate-server ./cmd/webgate-relay
 ```
 
 Durability negatives:
@@ -322,6 +339,16 @@ network failure/redirect/oversized/malformed authority response → unavailable
 200 allow with wrong AccountID/DeviceID or empty SessionID → unavailable
 device without AccountID → deny before authority I/O
 child process environment → no WEBGATE_AUTHORITY_TOKEN / WEBGATE_ADMIN_TOKEN
+```
+
+Reverse connectivity negatives:
+
+```text
+no origin connected → relay rejects client connection immediately (fail-closed)
+unauthenticated origin / wrong cluster token → relay rejects connection
+non-loopback data gateway target → origin agent rejects configuration
+relay restart / connection drop → origin agent auto-reconnects with backoff
+malformed protocol magic → relay rejects connection immediately
 ```
 
 T-044 later adds race + automated mutation/fuzz gates.
@@ -359,14 +386,22 @@ Green CI never overrules a stronger invariant. A workflow that never starts exec
 - **Iteration 15 / T-039B1:** transactional durable registries; persist-order mutant killed; `30481a7b...`; run `33471683325` PASS.
 - **Iteration 16 / T-039B2:** audit/control/recovery. RED `72d510a0...`; secret mutant `b1dda3ef...` killed; qualified tree `9491e382...`; final/main `aad9be2ff541f12b2281e76dfae384175bdcefd8`; run `33473723354` PASS. During promotion two accidental empty-placeholder commits were created by contents-write; they were forward-corrected without force/rewrite, and the final qualified tree contains no placeholder file.
 - **Iteration 17 / T-036:** real destination-restricted loopback SOCKS5 proxy with local domain/port policy enforcement, live handshake verification, loopback-only plaintext sidecar upstream, and live endpoint revocation on transport/sidecar failure. RED `2be41065...`; green/hardened `690ea51...`; integration & quality gates PASS.
+- **Iteration 18 / T-037:** Origin reverse agent with persistent authenticated reverse Relay A/B connectivity and standalone Relay transit node. Integration tests in `pkg/origin` and `pkg/relay`; multi-relay end-to-end, stream multiplexing, auto-reconnect on restart, non-loopback rejection, and fail-closed gates PASS.
 
 ---
 
 # 11. Context checkpoint
 
 ```text
-WEBGATE QUALIFIED MAIN: aad9be2ff541f12b2281e76dfae384175bdcefd8
+WEBGATE QUALIFIED MAIN: aa55b6a50616b4931a742ee8b4e72390a8a71536
 SECUREACCES LAST KNOWN MAIN: 827abb1add11a9fcbd0a9944e65efbd20c675739
+
+T-037 DONE:
+- Origin agent maintaining persistent authenticated outbound reverse sessions to independent Relay A and Relay B
+- No public inbound ports / CGNAT traversal (I-012)
+- Multiplexed stream dispatching to local loopback data gateway (127.0.0.1:DataPort)
+- Auto-reconnect with exponential backoff on relay failure
+- Standalone Relay CLI node (cmd/webgate-relay)
 
 T-036 DONE:
 - real destination-restricted SOCKS5 proxy listener (loopback)
@@ -397,8 +432,8 @@ response fails closed, but action+audit are not one transaction → T-051.
 
 NEXT:
 1) one controlled SecureAcces private-CI recheck
-2) if still blocked: T-037 Origin reverse connectivity
-3) T-040 Production platform key stores
+2) T-040 Production platform key stores
+3) T-041 Real Servo runtime + enforced protected proxy
 
 NO FORCE PUSH.
 ```
