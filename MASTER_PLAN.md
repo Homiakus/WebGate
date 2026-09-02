@@ -1926,10 +1926,10 @@ From this section onward, `Enterprise Qualified` under T-069 additionally depend
 
 ## 17.2 Findings accepted from the 2026-09-02 human usability audit
 
-- **U-F-001 — Client navigation can report false success:** CRITICAL → T-079. `/api/navigate` returns HTTP 200 with an internal `ok` field, while current UI treats `res.ok` as session success and does not require `data.ok`.
-- **U-F-002 — Network/backend failure can trigger synthetic navigation success:** CRITICAL → T-079. The client UI currently has a timed fallback that renders a successful capsule/session message after failed `/api/navigate` communication.
-- **U-F-003 — Silent standalone mock profile hides backend loss:** CRITICAL product trust → T-079. `/api/profile` failure can leave realistic demo data visible without a persistent `DEMO/OFFLINE` distinction.
-- **U-F-004 — Config binding can be shown as successful before backend acceptance:** CRITICAL → T-079. Frontend parses/mutates local profile state and displays success independently of authoritative transactional binding result.
+- **U-F-001 — Client navigation can report false success:** RESOLVED by T-079. Frontend success now requires authoritative structured navigation state rather than HTTP transport success alone.
+- **U-F-002 — Network/backend failure can trigger synthetic navigation success:** RESOLVED by T-079. Timeout/network/malformed/4xx/5xx paths remain failed/degraded and cannot synthesize protected success.
+- **U-F-003 — Silent standalone mock profile hides backend loss:** RESOLVED by T-079. Core loss clears unconfirmed live state, blocks launch and exposes a persistent explicit offline state; realistic mock data is not silently substituted.
+- **U-F-004 — Config binding can be shown as successful before backend acceptance:** RESOLVED by T-079. Candidate configuration remains non-authoritative until backend acceptance and authoritative profile reconciliation; rejection preserves the previous active profile.
 - **U-F-005 — GUI launch semantics do not yet prove a real BrowserCapsule launch:** CRITICAL → T-080. The inspected GUI navigation handler verifies request/transport state but does not itself own the real `BrowserCapsule::start/navigate` flow used by the CLI path.
 - **U-F-006 — End-user interface exposes implementation vocabulary:** HIGH → T-081. Relay addresses, profile/config file binding, `webgate://` route text, Ed25519 and broker/IPC telemetry dominate the ordinary client experience.
 - **U-F-007 — User lifecycle is device-centric rather than person-centric:** HIGH → T-082. Enrollment currently expects manual device/user IDs and public-key material instead of a human invitation/approval journey.
@@ -1946,7 +1946,7 @@ From this section onward, `Enterprise Qualified` under T-069 additionally depend
 ---
 
 ## T-079 — Truthful client state and elimination of false-success/mock-success paths
-**Status:** READY · **Priority:** P0 immediate · **Owns:** U-F-001..U-F-004 · **Protects:** I-003, I-005, I-020, U-I-001..U-I-003, U-I-006, U-I-014
+**Status:** DONE · **Priority:** P0 immediate · **Owns:** U-F-001..U-F-004 · **Protects:** I-003, I-005, I-020, U-I-001..U-I-003, U-I-006, U-I-014
 
 ### Required changes
 
@@ -1963,10 +1963,21 @@ From this section onward, `Enterprise Qualified` under T-069 additionally depend
 
 The UI cannot display a protected-success state unless a real owning backend/runtime proof exists. Killing the local core or returning any negative navigation/config result must produce an unmistakable failure/degraded state and zero synthetic success text.
 
+### Qualified evidence — 2026-09-02
+
+- `/api/navigate` distinguishes invalid request/policy deny/protected-transport unavailable/`transport_ready`; HTTP success alone is not a protected-session proof.
+- `client_ui_truth_patch.js` owns authoritative UI reconciliation: explicit core-offline state, no silent realistic mock profile, backend-confirmed config binding and durable critical status surfaces.
+- `scripts/tests/test_client_ui_truth.py` permanently guards the source-level truth contract against reintroduction of the known synthetic-success patterns.
+- `scripts/test_client_ui_browser.py` executes the real `client_ui.html` + truth controller in headless Chromium against controlled local `/api/*` responses.
+- Browser qualification passes seven branches: core offline, valid `transport_ready`, `200 + ok:false`, HTTP 503, malformed JSON, connection loss and rejected configuration; every negative branch proves zero fabricated protected-success text.
+- Exact qualified main state `53374681f7f88f2c36b1063a6ee9018f88403fa9`, GitHub Actions `rust-ci` run `33680298245`: browser truth qualification, project-manager tests/contract, architecture boundary check, lockfile, Rust fmt/check/test/clippy, Go module/format/vet/test/CGO=0 portability and dependency policy all PASS.
+- Temporary diagnostic workflows used while repairing the browser harness were removed; the Chromium qualification remains a permanent step in the normal `rust-ci` verify job.
+- T-079 intentionally proves truthful route/readiness semantics only. A real protected browser instance is not called `Open` until T-080 owns and qualifies `BrowserCapsule` orchestration.
+
 ---
 
 ## T-080 — Real GUI BrowserCapsule/session orchestration
-**Status:** TODO · **Priority:** P0 client · **Depends on:** T-079 and stable T-055/T-064 browser/session contracts · **Owns:** U-F-005 · **Protects:** I-001, I-004, P-I-002, P-I-003, U-I-001, U-I-003, U-I-014
+**Status:** IN_PROGRESS · **Priority:** P0 client · **Depends on:** T-079 and stable T-055/T-064 browser/session contracts · **Owns:** U-F-005 · **Protects:** I-001, I-004, P-I-002, P-I-003, U-I-001, U-I-003, U-I-014
 
 ### Required architecture
 
