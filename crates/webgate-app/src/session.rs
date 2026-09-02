@@ -165,7 +165,14 @@ impl ApplicationSessionManager {
             );
         }
 
-        let proxy = protected_proxy.expect("checked above: protected proxy must exist");
+        let Some(proxy) = protected_proxy else {
+            return self.insert_terminal(
+                session_id,
+                target_url,
+                ApplicationSessionState::Offline,
+                "protected transport is missing its verified loopback proxy",
+            );
+        };
         let policy = profile.build_navigation_policy();
         let mut capsule = BrowserCapsule::new(BrowserKind::Servo, policy);
 
@@ -341,6 +348,9 @@ mod tests {
         let closed = manager.close(&opened.session_id).unwrap();
         assert_eq!(closed.state, ApplicationSessionState::Closed);
         assert_eq!(manager.active_capsule_count(), 0);
-        assert_eq!(manager.get(&opened.session_id).unwrap().state, ApplicationSessionState::Closed);
+        assert_eq!(
+            manager.get(&opened.session_id).unwrap().state,
+            ApplicationSessionState::Closed
+        );
     }
 }
