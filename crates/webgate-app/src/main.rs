@@ -171,12 +171,7 @@ fn client_ui_document() -> String {
     CLIENT_UI_HTML.replacen("</body>", &patch, 1)
 }
 
-fn write_http_response(
-    stream: &mut TcpStream,
-    status: &str,
-    content_type: &str,
-    body: &str,
-) {
+fn write_http_response(stream: &mut TcpStream, status: &str, content_type: &str, body: &str) {
     let response = format!(
         "HTTP/1.1 {}\r\nContent-Type: {}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         status,
@@ -380,7 +375,12 @@ fn handle_client_stream(
         return;
     }
 
-    write_http_response(&mut stream, "404 Not Found", "text/plain; charset=utf-8", "");
+    write_http_response(
+        &mut stream,
+        "404 Not Found",
+        "text/plain; charset=utf-8",
+        "",
+    );
 }
 
 fn launch_app_window(url: &str) {
@@ -477,16 +477,26 @@ fn main() {
             "--list" | "-l" => list_only = true,
             "--cli" | "--terminal" => cli_only = true,
             "--help" | "-h" => {
-                println!("WebGate Клиент — Защищенный браузерный клиент доступа к приватным ресурсам");
+                println!(
+                    "WebGate Клиент — Защищенный браузерный клиент доступа к приватным ресурсам"
+                );
                 println!();
                 println!("ИСПОЛЬЗОВАНИЕ:");
                 println!("    webgate-app [ПАРАМЕТРЫ]");
                 println!();
                 println!("ПАРАМЕТРЫ:");
-                println!("    -c, --config <ПУТЬ>         Привязать файл конфигурационного профиля (.toml/.json)");
-                println!("    -d, --destination <URL|ID>  Выбрать целевой сервис или URL для перехода");
-                println!("    -l, --list                  Показать список доступных сервисов в профиле и выйти");
-                println!("        --cli                   Запуск только в терминальном режиме без открытия окна GUI");
+                println!(
+                    "    -c, --config <ПУТЬ>         Привязать файл конфигурационного профиля (.toml/.json)"
+                );
+                println!(
+                    "    -d, --destination <URL|ID>  Выбрать целевой сервис или URL для перехода"
+                );
+                println!(
+                    "    -l, --list                  Показать список доступных сервисов в профиле и выйти"
+                );
+                println!(
+                    "        --cli                   Запуск только в терминальном режиме без открытия окна GUI"
+                );
                 println!("    -h, --help                  Показать справочную информацию");
                 return;
             }
@@ -517,9 +527,18 @@ fn main() {
     };
 
     if list_only {
-        println!("Настроенные сервисы и маршруты в профиле '{}':", profile.profile_name);
+        println!(
+            "Настроенные сервисы и маршруты в профиле '{}':",
+            profile.profile_name
+        );
         for (idx, dest) in profile.destinations.iter().enumerate() {
-            println!(" {:02}. [{}] {} → {}", idx + 1, dest.id, dest.name, dest.url);
+            println!(
+                " {:02}. [{}] {} → {}",
+                idx + 1,
+                dest.id,
+                dest.name,
+                dest.url
+            );
             println!("     {}", dest.description);
         }
         return;
@@ -537,7 +556,9 @@ fn main() {
     let keystore = match PersistentFileDeviceKeyStore::open(&key_path) {
         Ok(mut ks) => {
             if ks.get_device_identity().ok().flatten().is_none()
-                && ks.generate_key(profile.key_algorithm, &profile.device_label).is_err()
+                && ks
+                    .generate_key(profile.key_algorithm, &profile.device_label)
+                    .is_err()
             {
                 eprintln!("[Хранилище ключей] Ошибка генерации ключа устройства");
                 return;
@@ -563,7 +584,9 @@ fn main() {
                 let ep = dual_transport.start_proxy().ok();
                 let state = dual_transport.state();
                 if ep.is_none() {
-                    eprintln!("[Транспорт] Dual-relay upstreams не подтверждены; protected proxy остаётся OFFLINE.");
+                    eprintln!(
+                        "[Транспорт] Dual-relay upstreams не подтверждены; protected proxy остаётся OFFLINE."
+                    );
                 }
                 (state, ep)
             }
@@ -578,7 +601,9 @@ fn main() {
                 let ep = primary.start_proxy().ok();
                 let state = primary.state();
                 if ep.is_none() {
-                    eprintln!("[Транспорт] Primary sidecar не подтверждён; protected proxy остаётся OFFLINE.");
+                    eprintln!(
+                        "[Транспорт] Primary sidecar не подтверждён; protected proxy остаётся OFFLINE."
+                    );
                 }
                 (state, ep)
             }
@@ -617,10 +642,14 @@ fn main() {
                 let navigated = capsule.navigate(&target_destination).is_ok();
                 if proxy_attached && capsule_started && navigated {
                     println!("  [Капсула] Соединение установлено: {target_destination}");
-                    println!("  [Капсула] Граница изоляции активна. Сетевые маршруты ОС не затронуты.");
+                    println!(
+                        "  [Капсула] Граница изоляции активна. Сетевые маршруты ОС не затронуты."
+                    );
                 }
             } else {
-                println!("  [Транспорт] OFFLINE: реальный защищённый proxy/tunnel не подтверждён; навигация запрещена.");
+                println!(
+                    "  [Транспорт] OFFLINE: реальный защищённый proxy/tunnel не подтверждён; навигация запрещена."
+                );
             }
         }
         println!(
@@ -735,7 +764,10 @@ mod tests {
             port: 4443,
         };
         let result = build_dual_relay_transport(&profile, &fallback);
-        assert!(matches!(result, Err(DualRelayError::FallbackUpstreamNotLoopback)));
+        assert!(matches!(
+            result,
+            Err(DualRelayError::FallbackUpstreamNotLoopback)
+        ));
     }
 
     #[test]
@@ -779,7 +811,8 @@ mod tests {
         let body = r#"{"target_url":"webgate://service/docs/overview"}"#;
         let request = format!(
             "POST /api/navigate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(), body
+            body.len(),
+            body
         );
         let response = http_roundtrip(&request, TransportState::Offline, None);
         assert!(response.starts_with("HTTP/1.1 503 Service Unavailable"));
@@ -793,7 +826,8 @@ mod tests {
         let body = r#"{}"#;
         let request = format!(
             "POST /api/navigate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(), body
+            body.len(),
+            body
         );
         let response = http_roundtrip(&request, TransportState::Ready, None);
         assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
@@ -806,7 +840,8 @@ mod tests {
         let body = r#"{"target_url":"webgate://service/docs/overview"}"#;
         let request = format!(
             "POST /api/navigate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(), body
+            body.len(),
+            body
         );
         let response = http_roundtrip(&request, TransportState::Ready, Some(proxy));
         assert!(response.starts_with("HTTP/1.1 200 OK"));
@@ -884,14 +919,21 @@ mod tests {
 
         let server_thread = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            handle_client_stream(stream, &profile_clone, "dev_test_123", TransportState::Ready, None);
+            handle_client_stream(
+                stream,
+                &profile_clone,
+                "dev_test_123",
+                TransportState::Ready,
+                None,
+            );
         });
 
         let mut client = TcpStream::connect(addr).unwrap();
         let valid_body = r#"{"content":"profile_id = \"http-fleet\"\nprofile_name = \"HTTP Fleet\"\nprimary_relay_addr = \"127.0.0.1\"\nprimary_relay_port = 48000\ndestination = \"srv|Srv|webgate://service/s|Cat|Desc\"\n"}"#;
         let req = format!(
             "POST /api/bind_config HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            valid_body.len(), valid_body
+            valid_body.len(),
+            valid_body
         );
         client.write_all(req.as_bytes()).unwrap();
         let mut resp = String::new();
@@ -912,14 +954,21 @@ mod tests {
 
         let server_thread = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            handle_client_stream(stream, &profile_clone, "dev_test_123", TransportState::Ready, None);
+            handle_client_stream(
+                stream,
+                &profile_clone,
+                "dev_test_123",
+                TransportState::Ready,
+                None,
+            );
         });
 
         let mut client = TcpStream::connect(addr).unwrap();
         let invalid_body = r#"{"content":"primary_relay_port = not_a_number\n"}"#;
         let req = format!(
             "POST /api/bind_config HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            invalid_body.len(), invalid_body
+            invalid_body.len(),
+            invalid_body
         );
         client.write_all(req.as_bytes()).unwrap();
         let mut resp = String::new();
