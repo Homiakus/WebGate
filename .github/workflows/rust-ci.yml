@@ -33,6 +33,9 @@ jobs:
       - name: Project manager tests
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
+      - name: Client UI browser truth qualification
+        run: python3 scripts/test_client_ui_browser.py
+
       - name: Project manager command contract
         run: python3 scripts/project_manager.py verify --dry-run
 
