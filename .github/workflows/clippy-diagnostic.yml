@@ -1,0 +1,40 @@
+name: clippy-diagnostic
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/clippy-diagnostic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, Node 24
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+      - name: Capture Clippy
+        shell: bash
+        run: |
+          set +e
+          cargo clippy --workspace --all-targets --locked -- -D warnings > clippy.log 2>&1
+          code=$?
+          cat clippy.log
+          echo "$code" > clippy.exit
+          exit 0
+      - name: Upload diagnostic
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: clippy-diagnostic
+          path: |
+            clippy.log
+            clippy.exit
+          if-no-files-found: error
