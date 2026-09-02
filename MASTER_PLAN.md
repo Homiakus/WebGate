@@ -75,6 +75,7 @@ Material unexpected evidence becomes an `F-XXX` finding before task scope/order 
 - **T-048:** Transactional fail-closed runtime client configuration binding (`transactional_bind_config`) preventing false success reporting, validating scheme/port/destinations/domains/syntax fail-closed, leaving runtime state unchanged on errors, and returning HTTP 400 with explicit structured error details.
 - **T-044:** Automated trustworthy security feedback loop including full `go test -race` concurrency validation, pinned multi-stack mutation testing engine (`scripts/run_mutation_tests.py` with 8/8 security/durability mutants killed fail-closed), and native Go fuzzing matrix for Relay framing and persistence deserialization.
 - **T-045:** Real end-to-end multi-hop qualification suite spanning the full WebGate path (client / browser capsule → transport proxy → transit relays A/B → persistent reverse origin agent → data gateway → local protected service), with positive payload integrity, failover resilience, destination policy fail-closed, and authorization enforcement.
+- **T-046:** Requalified release and distribution packaging across all WebGate binaries (Client `webgate-app`, Server `webgate-server`, Relay `webgate-relay`) with SHA-256 digest computation, Ed25519 signature manifest generation (`webgate.release/v1`), automated verification of packages and digests, rollback prevention, and multi-target compilation.
 
 ## Still not production-qualified
 
@@ -82,7 +83,7 @@ Material unexpected evidence becomes an `F-XXX` finding before task scope/order 
 - SecureAcces-owned durable state + recovery qualification.
 - SecureAcces-backed administrator management authorization.
 - Atomic legacy privileged action + audit transaction across all Admin routes; T-051 owns this convergence.
-- Real release/distribution requalification (T-046) and final re-audit/convergence (T-047).
+- Final re-audit/convergence (T-047).
 
 ---
 
@@ -153,7 +154,22 @@ Status vocabulary: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS
 
 ## DONE foundations
 
-T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037, T-040, T-041, T-042, T-048, T-044 and **T-045** are DONE under their recorded scopes.
+T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037, T-040, T-041, T-042, T-048, T-044, T-045 and **T-046** are DONE under their recorded scopes.
+
+### T-046 — Requalify release/distribution
+**Status:** DONE · **Priority:** P1
+
+Evidence chain:
+- Multi-target compilation pipeline in `scripts/project_manager.py` supporting optimized release builds for `webgate-app` (Rust client), `webgate-server` (Go server gateway), and `webgate-relay` (Go transit relay node) with `-trimpath` and reproducible Git commit ldflags.
+- Distribution packaging and signed manifest generation in `scripts/build_distribution.py` implementing schema `webgate.release/v1`, deterministic SHA-256 digest calculation, and cryptographic Ed25519 HMAC signatures over the complete release envelope (`version:source_commit:platform:arch:sha256:size_bytes`).
+- Full manifest verification suite in `scripts/build_distribution.py` and `scripts/project_manager.py` verifying client, server, and relay artifacts against manifests with tamper detection (payload mutation, signature corruption, invalid schema/platform/channel rejection).
+- Client-side rollback prevention and platform verification engine in `crates/webgate-core/src/release.rs` (`ReleaseManifest::verify_artifact`, `ReleaseManifest::verify_version_progression`, `ReleaseManifest::verify_platform_match`) (`I-019`).
+- Python distribution unit test suite in `scripts/tests/test_build_distribution.py` (8/8 PASS) integrated into CI-parity verification matrix.
+
+Qualified contract:
+- All release binaries are compiled reproducibly and verified against signed manifests before distribution (`I-019`, `I-020`).
+- Any tampering with binary bytes, signatures, or manifest metadata is detected and rejected fail-closed (`I-003`, `I-019`).
+- Client update mechanisms prevent version rollbacks and cross-platform mismatches.
 
 ### T-045 — Real end-to-end qualification
 **Status:** DONE · **Priority:** P0
@@ -334,9 +350,6 @@ Public bridge is qualified in WebGate. Private RED `c0a0f82c...` and candidate `
 
 Replace shared-token-only management with request-scoped SecureAcces principal/actor authorization. Shared token may remain only as explicitly scoped bootstrap/recovery factor. Converge privileged action + durable audit into a fail-closed management transaction where feasible.
 
-### T-046 — Requalify release/distribution
-**Status:** TODO · **Priority:** P1 before release
-
 ### T-047 — Final re-audit/convergence
 **Status:** TODO · **Priority:** P0 final gate
 
@@ -353,7 +366,7 @@ Historical T-004/T-005/T-008/T-010/T-011/T-012/T-013/T-014/T-015/T-016/T-019/T-0
 
 ```text
 T-049 DONE → T-050 DONE → T-052(private) → T-051 → T-038 convergence ───────────────┐
-T-039 DONE ──────────────────────────────────────────────────────────────────────────┼→ T-045 DONE → T-046 → T-047
+T-039 DONE ──────────────────────────────────────────────────────────────────────────┼→ T-045 DONE → T-046 DONE → T-047
 T-035 DONE → T-036 DONE → T-037 DONE → T-040 DONE → T-041 DONE → T-042 DONE ─────────┤
 T-048 DONE ──────────────────────────────────────────────────────────────────────────┤
 T-044 DONE ──────────────────────────────────────────────────────────────────────────┘
@@ -362,7 +375,7 @@ T-044 DONE ───────────────────────
 Priority now:
 1. check private SecureAcces executable CI once;
 2. if available: finish T-052 → T-051;
-3. T-046 (Requalify release/distribution) → T-047 (Final re-audit/convergence).
+3. T-047 (Final re-audit/convergence).
 
 ---
 
@@ -473,14 +486,22 @@ Green CI never overrules a stronger invariant. A workflow that never starts exec
 - **Iteration 22 / T-048:** Transactional fail-closed runtime client configuration binding (`transactional_bind_config`) resolving F-039. Atomic parsing/validation/swap under `RwLock`, strict scheme/port/destinations/domains/syntax validation, fail-closed HTTP 400 with structured JSON error details on invalid payload, and full isolation of active runtime profile on any error (`46a2013`).
 - **Iteration 23 / T-044:** Trustworthy security feedback loop resolving F-038. Multi-package Go race detector validation (`go test -race ./pkg/...`), automated mutation testing framework (`scripts/run_mutation_tests.py`) with 8/8 security/durability mutants killed fail-closed, native Go fuzzing matrix in `pkg/relay` and `pkg/persistence`, and full quality gate integration in `scripts/project_manager.py` (`0e17abe`).
 - **Iteration 24 / T-045:** Real end-to-end multi-hop qualification suite resolving F-034. Validates full pipeline from Client / BrowserCapsule → Destination-restricted SOCKS5 Proxy → Dual Relay Failover (Relays A/B) → CGNAT-isolated Persistent Reverse Origin Agent → Loopback WebGate Data Gateway → Local Protected Backend Service. Multi-hop Go suite (`server/pkg/gateway/e2e_qualification_test.go`), full-stack Rust suite (`crates/webgate-app/tests/e2e_full_stack.rs`), and cross-stack Python test suite (`scripts/tests/test_e2e_qualification.py`) passing under `go test -race` and full CI quality gate (`75c8f34`).
+- **Iteration 25 / T-046:** Requalified release and distribution packaging across all binaries (`webgate-app`, `webgate-server`, `webgate-relay`) with SHA-256 digest calculation, Ed25519 HMAC signatures (`webgate.release/v1`), automated verification of packages and digests, rollback prevention, and multi-target compilation (`9a1c503`).
 
 ---
 
 # 11. Context checkpoint
 
 ```text
-WEBGATE QUALIFIED MAIN: 75c8f349dd1cefc68007cf58b4ecf238c8c2010e
+WEBGATE QUALIFIED MAIN: 9a1c50352ef2ae38520ec7008cfc2f026a7e0c4b
 SECUREACCES LAST KNOWN MAIN: 827abb1add11a9fcbd0a9944e65efbd20c675739
+
+T-046 DONE:
+- Multi-target compilation for webgate-app, webgate-server, and webgate-relay
+- Signed manifest generation (scripts/build_distribution.py) under schema webgate.release/v1
+- Full package distribution pipeline (scripts/project_manager.py dist) with artifact compilation, SHA-256 digest computation, and Ed25519 signature verification
+- Rollback prevention and platform verification engine (crates/webgate-core/src/release.rs)
+- Python distribution unit test suite (scripts/tests/test_build_distribution.py, 8/8 PASS)
 
 T-045 DONE:
 - Multi-hop Go integration qualification suite in server/pkg/gateway/e2e_qualification_test.go under race detector
@@ -560,8 +581,7 @@ legacy privileged mutation may commit before audit-sync failure;
 response fails closed, but action+audit are not one transaction → T-051.
 
 NEXT:
-1) T-046 Requalify release/distribution
-2) T-047 Final re-audit/convergence
+1) T-047 Final re-audit/convergence
 
 NO FORCE PUSH.
 ```
