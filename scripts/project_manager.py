@@ -759,6 +759,8 @@ def verify(*, dry_run: bool = False) -> int:
         (["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"], ROOT, "Rust Clippy"),
         (["go", "vet", "./..."], ROOT / "server", "Go Vet"),
         (["go", "test", "./..."], ROOT / "server", "Go Tests"),
+        (["go", "test", "-race", "./pkg/persistence", "./pkg/registry", "./pkg/origin", "./pkg/relay"], ROOT / "server", "Go Race Checks"),
+        ([sys.executable, "scripts/run_mutation_tests.py"], ROOT, "Automated Mutation Testing Gate"),
     ]
     if executable("cargo-deny"):
         commands.append((["cargo", "deny", "check", "--all-features"], ROOT, "Cargo Security Policy"))
@@ -770,6 +772,27 @@ def verify(*, dry_run: bool = False) -> int:
         if code != 0:
             return code
     print(f"\n{Color.GREEN}{Color.BOLD}[PASS] Verification: PASS (All Quality Gates Cleared){Color.RESET}")
+    return 0
+
+
+def mutate(*, dry_run: bool = False) -> int:
+    """Executes automated mutation test suite verifying all security/durability mutants are killed."""
+    return run([sys.executable, "scripts/run_mutation_tests.py"], cwd=ROOT, dry_run=dry_run, label="Mutation Invariant Suite")
+
+
+def fuzz(*, duration_sec: int = 2, dry_run: bool = False) -> int:
+    """Executes native Go fuzz targets on critical protocol and persistence parsers."""
+    print(f"\n{Color.BOLD}[FUZZ] Executing Protocol and State Fuzzing Matrix...{Color.RESET}")
+    targets = [
+        (["go", "test", "-fuzz=FuzzReadFrame", f"-fuzztime={duration_sec}s", "./pkg/relay"], ROOT / "server", "Relay Frame Protocol Fuzzer"),
+        (["go", "test", "-fuzz=FuzzDurableServerConfigUnmarshal", f"-fuzztime={duration_sec}s", "./pkg/persistence"], ROOT / "server", "Durable Server Config Fuzzer"),
+        (["go", "test", "-fuzz=FuzzAuditEventUnmarshal", f"-fuzztime={duration_sec}s", "./pkg/persistence"], ROOT / "server", "Audit Event Unmarshal Fuzzer"),
+    ]
+    for cmd, cwd, label in targets:
+        code = run(cmd, cwd=cwd, dry_run=dry_run, label=label)
+        if code != 0:
+            return code
+    print(f"\n{Color.GREEN}{Color.BOLD}[PASS] Fuzzing Matrix: PASS{Color.RESET}")
     return 0
 
 
@@ -997,6 +1020,15 @@ def parser() -> argparse.ArgumentParser:
     verify_parser = sub.add_parser("verify", help="Полная проверка качества и архитектурных гейтов (CI-parity)")
     verify_parser.add_argument("--dry-run", action="store_true")
 
+    # mutate
+    mutate_parser = sub.add_parser("mutate", help="Запуск автоматизированных тестов мутаций безопасности и инвариантов")
+    mutate_parser.add_argument("--dry-run", action="store_true")
+
+    # fuzz
+    fuzz_parser = sub.add_parser("fuzz", help="Запуск фаззинг-тестов парсеров протоколов и состояния")
+    fuzz_parser.add_argument("--duration", type=int, default=2, help="Длительность фаззинга каждого таргета в секундах")
+    fuzz_parser.add_argument("--dry-run", action="store_true")
+
     # security
     security_parser = sub.add_parser("security", help="Проверка политик безопасности и зависимостей")
     security_parser.add_argument("--dry-run", action="store_true")
@@ -1053,6 +1085,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return test(dry_run=args.dry_run)
         if command == "verify":
             return verify(dry_run=args.dry_run)
+        if command == "mutate":
+            return mutate(dry_run=args.dry_run)
+        if command == "fuzz":
+            return fuzz(duration_sec=args.duration, dry_run=args.dry_run)
         if command == "security":
             return security(dry_run=args.dry_run)
         if command in {"dist", "package"}:
@@ -1076,3 +1112,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
