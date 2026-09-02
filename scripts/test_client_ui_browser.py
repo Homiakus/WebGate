@@ -111,9 +111,9 @@ def scenario_probe_script(name: str) -> str:
         return;
       }}
 
-      if (scenario === 'navigate_success' || scenario === 'navigate_ok_false' ||
-          scenario === 'navigate_503' || scenario === 'navigate_malformed' ||
-          scenario === 'navigate_disconnect') {{
+      if (scenario === 'session_open_success' || scenario === 'session_ok_false' ||
+          scenario === 'session_503' || scenario === 'session_malformed' ||
+          scenario === 'session_disconnect' || scenario === 'renderer_unqualified') {{
         const input = document.getElementById('target-url-input');
         if (!input || typeof window.launchNavigation !== 'function') {{
           finish(false, 'navigation controls are not initialized');
@@ -127,17 +127,18 @@ def scenario_probe_script(name: str) -> str:
           body.includes('Капсула запущена для:') ||
           body.includes('Сессия установлена с');
 
-        if (scenario === 'navigate_success') {{
-          const ok = body.includes('ЗАЩИЩЁННЫЙ МАРШРУТ ПОДТВЕРЖДЁН') &&
-            body.includes('Реальный запуск браузера будет подтверждаться отдельно') &&
+        if (scenario === 'session_open_success') {{
+          const ok = body.includes('ЗАЩИЩЁННОЕ ПРИЛОЖЕНИЕ ОТКРЫТО') &&
+            body.includes('wgs-browser-test') &&
             !oldFalseSuccess;
-          finish(ok, 'success is transport_ready, never fabricated browser-open state');
+          finish(ok, 'Open is rendered only from authoritative session-open proof');
           return;
         }}
 
         const failureVisible = body.includes('не подтвердило') ||
           body.includes('недоступ') || body.includes('потеряна') ||
-          body.includes('ОТКЛОНЁН') || body.includes('ошибк');
+          body.includes('ОТКЛОНЁН') || body.includes('ошибк') ||
+          body.includes('НЕ КВАЛИФИЦИРОВАН') || body.includes('не квалифицирован');
         finish(
           failureVisible && !oldFalseSuccess,
           'negative navigation cannot render synthetic success'
@@ -242,20 +243,20 @@ class ScenarioHandler(http.server.BaseHTTPRequestHandler):
         if length:
             self.rfile.read(length)
 
-        if path == "/api/navigate":
+        if path == "/api/session/open":
             scenario = self.server.scenario
-            if scenario == "navigate_success":
+            if scenario == "session_open_success":
                 self._send_json(
                     200,
                     {
                         "ok": True,
-                        "state": "transport_ready",
+                        "state": "open",
+                        "session_id": "wgs-browser-test",
                         "target": "webgate://service/docs/overview",
-                        "transport_status": "ready",
-                        "protected_proxy": "127.0.0.1:43117",
+                        "message": "protected application open",
                     },
                 )
-            elif scenario == "navigate_ok_false":
+            elif scenario == "session_ok_false":
                 self._send_json(
                     200,
                     {
@@ -266,7 +267,7 @@ class ScenarioHandler(http.server.BaseHTTPRequestHandler):
                         "protected_proxy": None,
                     },
                 )
-            elif scenario == "navigate_503":
+            elif scenario == "session_503":
                 self._send_json(
                     503,
                     {
@@ -277,17 +278,28 @@ class ScenarioHandler(http.server.BaseHTTPRequestHandler):
                         "protected_proxy": None,
                     },
                 )
-            elif scenario == "navigate_malformed":
+            elif scenario == "session_malformed":
                 body = b"{not-json"
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-            elif scenario == "navigate_disconnect":
+            elif scenario == "session_disconnect":
                 with contextlib.suppress(Exception):
                     self.connection.shutdown(socket.SHUT_RDWR)
                 self.connection.close()
+            elif scenario == "renderer_unqualified":
+                self._send_json(
+                    503,
+                    {
+                        "ok": False,
+                        "state": "renderer_unqualified",
+                        "session_id": "wgs-browser-blocked",
+                        "target": "webgate://service/docs/overview",
+                        "message": "embedded renderer is not production-qualified",
+                    },
+                )
             else:
                 self._send_json(500, {"ok": False, "message": "unexpected scenario"})
             return
@@ -360,11 +372,12 @@ def main() -> int:
     base_document = prepare_base_document(CLIENT_HTML.read_text(encoding="utf-8"))
     scenarios = (
         "core_offline",
-        "navigate_success",
-        "navigate_ok_false",
-        "navigate_503",
-        "navigate_malformed",
-        "navigate_disconnect",
+        "session_open_success",
+        "session_ok_false",
+        "session_503",
+        "session_malformed",
+        "session_disconnect",
+        "renderer_unqualified",
         "config_rejected",
     )
     print(f"Browser: {chrome}")

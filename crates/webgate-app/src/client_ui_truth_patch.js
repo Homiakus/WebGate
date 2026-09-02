@@ -159,7 +159,7 @@
                     transportStatus === 'ready'
                         ? 'ЯДРО WEBGATE: ГОТОВО · ЗАЩИЩЁННЫЙ МАРШРУТ ДОСТУПЕН'
                         : 'ЯДРО WEBGATE: РАБОТАЕТ В ДЕГРАДИРОВАННОМ РЕЖИМЕ');
-                setLaunchBusy(false, 'ПРОВЕРИТЬ ДОСТУП');
+                setLaunchBusy(false, 'ОТКРЫТЬ ПРИЛОЖЕНИЕ');
             } else {
                 setTruthState('offline', 'ЗАЩИЩЁННЫЙ МАРШРУТ НЕДОСТУПЕН · ПРЯМОЕ ПОДКЛЮЧЕНИЕ ЗАПРЕЩЕНО');
                 setLaunchBusy(false, 'МАРШРУТ НЕДОСТУПЕН');
@@ -176,12 +176,17 @@
     }
 
     function navigationFailureMessage(responseStatus, data) {
-        if (responseStatus === 403) return 'Доступ к приложению запрещён политикой WebGate.';
-        if (responseStatus === 503 || data?.transport_status === 'offline') {
-            return 'Не удалось установить защищённый маршрут. Прямое подключение заблокировано.';
+        if (data?.state === 'renderer_unqualified') {
+            return 'Защищённый браузер ещё не квалифицирован. Приложение не открыто; системный браузерный fallback запрещён.';
+        }
+        if (responseStatus === 403 || data?.state === 'denied') {
+            return 'Доступ к приложению запрещён политикой WebGate.';
+        }
+        if (responseStatus === 503 || data?.state === 'offline') {
+            return 'Не удалось установить защищённую сессию. Прямое подключение заблокировано.';
         }
         if (responseStatus === 400) return 'Запрос приложения некорректен или не поддерживается.';
-        return data?.message || 'Ядро WebGate не подтвердило защищённый маршрут.';
+        return data?.message || 'Ядро WebGate не подтвердило защищённое открытие приложения.';
     }
 
     window.launchNavigation = async function launchNavigationTruthfully() {
@@ -197,41 +202,39 @@
             return;
         }
 
-        setLaunchBusy(true, 'ПРОВЕРКА...');
-        logMessage('ДОСТУП', `Запрошена authoritative-проверка защищённого маршрута: ${url}`, 'normal');
+        setLaunchBusy(true, 'ЗАПУСК...');
+        logMessage('СЕССИЯ', `Запрошен защищённый запуск приложения: ${url}`, 'normal');
 
         try {
-            const response = await fetch('/api/navigate', {
+            const response = await fetch('/api/session/open', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ target_url: url })
             });
             const data = await readJsonSafely(response);
 
-            if (!response.ok || !data || data.ok !== true || data.state !== 'transport_ready' || !data.protected_proxy) {
+            if (!response.ok || !data || data.ok !== true || data.state !== 'open' || !data.session_id) {
                 const message = navigationFailureMessage(response.status, data);
-                logMessage('ДОСТУП_ОТКЛОНЁН', message, 'err');
-                showToast(message, 'danger', 5500);
-                setTruthState(response.status === 403 ? 'degraded' : 'offline', message.toUpperCase());
+                const rendererBlocked = data?.state === 'renderer_unqualified';
+                logMessage(rendererBlocked ? 'БРАУЗЕР_НЕ_КВАЛИФИЦИРОВАН' : 'ДОСТУП_ОТКЛОНЁН',
+                    `${message}${data?.session_id ? ` Сессия: ${data.session_id}` : ''}`, 'err');
+                showToast(message, rendererBlocked ? 'warning' : 'danger', 6500);
+                setTruthState(rendererBlocked || response.status === 403 ? 'degraded' : 'offline', message.toUpperCase());
                 return;
             }
 
-            transportStatus = data.transport_status || transportStatus;
-            const message = 'Защищённый маршрут подтверждён. Реальный запуск браузера будет подтверждаться отдельно.';
-            logMessage('МАРШРУТ', `${message} Цель: ${data.target}`, 'ok');
+            const message = `Защищённое приложение открыто. Сессия: ${data.session_id}`;
+            logMessage('СЕССИЯ_OPEN', `${message} Цель: ${data.target}`, 'ok');
             showToast(message, 'success', 4500);
-            setTruthState(transportStatus === 'degraded' ? 'degraded' : 'ready',
-                transportStatus === 'degraded'
-                    ? 'ЗАЩИЩЁННЫЙ МАРШРУТ ПОДТВЕРЖДЁН · РЕЖИМ DEGRADED'
-                    : 'ЗАЩИЩЁННЫЙ МАРШРУТ ПОДТВЕРЖДЁН');
+            setTruthState('ready', `ЗАЩИЩЁННОЕ ПРИЛОЖЕНИЕ ОТКРЫТО · СЕССИЯ ${data.session_id}`);
         } catch (error) {
             coreOnline = false;
-            const message = 'Связь с ядром WebGate потеряна. Защищённый запуск не подтверждён.';
+            const message = 'Связь с ядром WebGate потеряна. Защищённое приложение не открыто.';
             logMessage('ЯДРО', `${message} ${error.message || error}`, 'err');
             showToast(message, 'danger', 5500);
-            setTruthState('offline', 'ЯДРО WEBGATE НЕДОСТУПНО · ЗАЩИЩЁННЫЙ ЗАПУСК НЕ ПОДТВЕРЖДЁН');
+            setTruthState('offline', 'ЯДРО WEBGATE НЕДОСТУПНО · ЗАЩИЩЁННОЕ ПРИЛОЖЕНИЕ НЕ ОТКРЫТО');
         } finally {
-            setLaunchBusy(false, coreOnline ? 'ПРОВЕРИТЬ ДОСТУП' : 'ЯДРО НЕДОСТУПНО');
+            setLaunchBusy(false, coreOnline ? 'ОТКРЫТЬ ПРИЛОЖЕНИЕ' : 'ЯДРО НЕДОСТУПНО');
         }
     };
 

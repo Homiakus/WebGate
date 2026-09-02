@@ -16,8 +16,9 @@ class ClientUiTruthContractTests(unittest.TestCase):
     def test_navigation_success_requires_authoritative_payload(self):
         self.assertIn("!response.ok", self.truth_js)
         self.assertIn("data.ok !== true", self.truth_js)
-        self.assertIn("data.state !== 'transport_ready'", self.truth_js)
-        self.assertIn("!data.protected_proxy", self.truth_js)
+        self.assertIn("fetch('/api/session/open'", self.truth_js)
+        self.assertIn("data.state !== 'open'", self.truth_js)
+        self.assertIn("!data.session_id", self.truth_js)
 
     def test_truth_patch_does_not_manufacture_open_session_success(self):
         forbidden = (
@@ -27,10 +28,9 @@ class ClientUiTruthContractTests(unittest.TestCase):
         )
         for phrase in forbidden:
             self.assertNotIn(phrase, self.truth_js)
-        self.assertIn(
-            "Реальный запуск браузера будет подтверждаться отдельно",
-            self.truth_js,
-        )
+        self.assertIn("renderer_unqualified", self.truth_js)
+        self.assertIn("системный браузерный fallback запрещён", self.truth_js)
+        self.assertIn("Защищённое приложение открыто. Сессия:", self.truth_js)
 
     def test_core_failure_clears_unverified_profile_and_blocks_launch(self):
         self.assertIn("clearUnverifiedProfile();", self.truth_js)
@@ -48,7 +48,9 @@ class ClientUiTruthContractTests(unittest.TestCase):
         self.assertIn('"400 Bad Request"', self.client_main)
         self.assertIn('"403 Forbidden"', self.client_main)
         self.assertIn('"503 Service Unavailable"', self.client_main)
-        self.assertIn('r#"{{\"ok\":true,\"state\":\"transport_ready\"', self.client_main)
+        self.assertIn('path == "/api/session/open"', self.client_main)
+        self.assertIn("ApplicationSessionState::RendererUnqualified", self.client_main)
+        self.assertIn("session_http_status(snapshot.state)", self.client_main)
         self.assertIn("browser session is not yet opened", self.client_main)
 
     def test_truth_controller_is_injected_after_legacy_document_body(self):
