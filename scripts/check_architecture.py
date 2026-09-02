@@ -22,7 +22,18 @@ ALLOWED_INTERNAL_DEPENDENCIES: dict[str, set[str]] = {
     },
 }
 
-DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
+ALLOWED_INTERNAL_DEV_DEPENDENCIES: dict[str, set[str]] = {
+    "webgate-core": set(),
+    "webgate-browser": {"webgate-core", "webgate-transport"},
+    "webgate-transport": {"webgate-core"},
+    "webgate-platform": {"webgate-core"},
+    "webgate-app": {
+        "webgate-browser",
+        "webgate-core",
+        "webgate-platform",
+        "webgate-transport",
+    },
+}
 
 
 def load_toml(path: Path) -> dict:
@@ -30,15 +41,15 @@ def load_toml(path: Path) -> dict:
         return tomllib.load(handle)
 
 
-def collect_dependency_names(document: dict) -> set[str]:
+def collect_dependency_names(document: dict, tables: tuple[str, ...]) -> set[str]:
     names: set[str] = set()
-    for table_name in DEPENDENCY_TABLES:
+    for table_name in tables:
         names.update(document.get(table_name, {}))
 
     for target in document.get("target", {}).values():
         if not isinstance(target, dict):
             continue
-        for table_name in DEPENDENCY_TABLES:
+        for table_name in tables:
             names.update(target.get(table_name, {}))
     return names
 
@@ -68,17 +79,30 @@ def main() -> int:
     errors: list[str] = []
     for package, manifest in actual_packages.items():
         document = load_toml(manifest)
-        internal = {
+        runtime_internal = {
             dependency
-            for dependency in collect_dependency_names(document)
+            for dependency in collect_dependency_names(document, ("dependencies", "build-dependencies"))
             if dependency.startswith("webgate-")
         }
-        allowed = ALLOWED_INTERNAL_DEPENDENCIES[package]
-        forbidden = internal - allowed
-        if forbidden:
+        allowed_runtime = ALLOWED_INTERNAL_DEPENDENCIES[package]
+        forbidden_runtime = runtime_internal - allowed_runtime
+        if forbidden_runtime:
             errors.append(
-                f"{package} has forbidden internal dependencies: {sorted(forbidden)}; "
-                f"allowed={sorted(allowed)}"
+                f"{package} has forbidden internal runtime dependencies: {sorted(forbidden_runtime)}; "
+                f"allowed={sorted(allowed_runtime)}"
+            )
+
+        dev_internal = {
+            dependency
+            for dependency in collect_dependency_names(document, ("dev-dependencies",))
+            if dependency.startswith("webgate-")
+        }
+        allowed_dev = ALLOWED_INTERNAL_DEV_DEPENDENCIES[package]
+        forbidden_dev = dev_internal - allowed_dev
+        if forbidden_dev:
+            errors.append(
+                f"{package} has forbidden internal dev-dependencies: {sorted(forbidden_dev)}; "
+                f"allowed={sorted(allowed_dev)}"
             )
 
     if errors:
@@ -93,3 +117,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

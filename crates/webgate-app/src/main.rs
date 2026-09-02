@@ -112,6 +112,82 @@ fn profile_to_json(profile: &ClientConfigProfile) -> String {
     )
 }
 
+fn escape_json(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+fn extract_json_string_field(json: &str, field_name: &str) -> Option<String> {
+    let key_pattern = format!("\"{}\"", field_name);
+    let key_pos = json.find(&key_pattern)?;
+    let after_key = &json[key_pos + key_pattern.len()..];
+    let colon_pos = after_key.find(':')?;
+    let after_colon = after_key[colon_pos + 1..].trim_start();
+    if !after_colon.starts_with('"') {
+        return None;
+    }
+    let string_content = &after_colon[1..];
+    let mut result = String::new();
+    let mut chars = string_content.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '"' {
+            return Some(result);
+        }
+        if ch == '\\' {
+            match chars.next() {
+                Some('"') => result.push('"'),
+                Some('\\') => result.push('\\'),
+                Some('/') => result.push('/'),
+                Some('b') => result.push('\x08'),
+                Some('f') => result.push('\x0c'),
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some(other) => {
+                    result.push('\\');
+                    result.push(other);
+                }
+                None => return None,
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    None
+}
+
+/// Atomically binds and validates runtime client configuration.
+/// Ensures fail-closed semantics: any parsing, validation, or lock failure leaves current configuration unchanged.
+pub fn transactional_bind_config(
+    profile_arc: &Arc<RwLock<ClientConfigProfile>>,
+    raw_body: &str,
+) -> Result<ClientConfigProfile, ConfigError> {
+    if raw_body.trim().is_empty() {
+        return Err(ConfigError::ValidationError("Request body is empty".to_string()));
+    }
+
+    let content = if let Some(content_val) = extract_json_string_field(raw_body, "content") {
+        content_val
+    } else if raw_body.trim_start().starts_with('{') {
+        return Err(ConfigError::ParseError(
+            "Malformed JSON payload: missing or invalid 'content' field".to_string(),
+        ));
+    } else {
+        raw_body.to_string()
+    };
+
+    let new_profile = ClientConfigProfile::from_toml_str(&content)?;
+
+    let mut lock = profile_arc
+        .write()
+        .map_err(|_| ConfigError::LockPoisoned)?;
+    *lock = new_profile.clone();
+    Ok(new_profile)
+}
+
 fn handle_client_stream(
     mut stream: TcpStream,
     profile_arc: &Arc<RwLock<ClientConfigProfile>>,
@@ -180,29 +256,42 @@ fn handle_client_stream(
     }
 
     if method == "POST" && path == "/api/bind_config" {
-        if let Some(body_start) = req_str.find("\r\n\r\n") {
-            let body = &req_str[body_start + 4..];
-            if let Some(c_start) = body.find("\"content\":") {
-                let content_sub = &body[c_start + 10..];
-                if let (Some(first_quote), Some(second_quote)) = (
-                    content_sub.find('"'),
-                    content_sub
-                        .find('"')
-                        .and_then(|q| content_sub[q + 1..].find('"')),
-                ) {
-                    let raw_content = &content_sub[first_quote + 1..first_quote + 1 + second_quote];
-                    let clean_content = raw_content.replace("\\n", "\n").replace("\\\"", "\"");
-                    if let (Ok(new_profile), Ok(mut lock)) = (
-                        ClientConfigProfile::from_toml_str(&clean_content),
-                        profile_arc.write(),
-                    ) {
-                        *lock = new_profile;
-                    }
-                }
+        let body = match req_str.find("\r\n\r\n") {
+            Some(idx) => &req_str[idx + 4..],
+            None => "",
+        };
+
+        match transactional_bind_config(profile_arc, body) {
+            Ok(new_profile) => {
+                let json_body = format!(
+                    r#"{{"status":"ok","profile_id":"{}","profile_name":"{}","version":"{}"}}"#,
+                    escape_json(&new_profile.profile_id),
+                    escape_json(&new_profile.profile_name),
+                    escape_json(&new_profile.version)
+                );
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    json_body.len(),
+                    json_body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+            Err(err) => {
+                let status_code = match err {
+                    ConfigError::LockPoisoned => "500 Internal Server Error",
+                    _ => "400 Bad Request",
+                };
+                let err_msg = escape_json(&err.to_string());
+                let json_body = format!(r#"{{"status":"error","message":"{}"}}"#, err_msg);
+                let response = format!(
+                    "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    status_code,
+                    json_body.len(),
+                    json_body
+                );
+                let _ = stream.write_all(response.as_bytes());
             }
         }
-        let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}";
-        let _ = stream.write_all(response.as_bytes());
         return;
     }
 
@@ -659,5 +748,164 @@ mod tests {
     fn offline_transport_never_serializes_a_protected_proxy() {
         assert_eq!(proxy_json(None), "null");
         assert_eq!(transport_state_label(TransportState::Offline), "offline");
+    }
+
+    #[test]
+    fn transactional_bind_config_updates_profile_on_valid_payload() {
+        let initial = ClientConfigProfile::default();
+        let profile_arc = Arc::new(RwLock::new(initial));
+
+        let payload = r#"{"content": "profile_id = \"custom-fleet\"\nprofile_name = \"Custom Fleet Mesh\"\nprimary_relay_addr = \"127.0.0.1\"\nprimary_relay_port = 52000\nallowed_domains = \"service, internal.mesh\"\ndestination = \"node1|Node One|webgate://service/node1|Infra|Node Telemetry\"\n"}"#;
+
+        let res = transactional_bind_config(&profile_arc, payload);
+        assert!(res.is_ok(), "Expected Ok but got {:?}", res);
+        let updated = res.unwrap();
+        assert_eq!(updated.profile_id, "custom-fleet");
+        assert_eq!(updated.profile_name, "Custom Fleet Mesh");
+        assert_eq!(updated.primary_relay.port, 52000);
+        assert_eq!(updated.allowed_domains, vec!["service", "internal.mesh"]);
+        assert_eq!(updated.destinations.len(), 1);
+
+        let in_lock = profile_arc.read().unwrap();
+        assert_eq!(in_lock.profile_id, "custom-fleet");
+    }
+
+    #[test]
+    fn transactional_bind_config_fails_closed_on_invalid_syntax() {
+        let initial = ClientConfigProfile::default();
+        let original_id = initial.profile_id.clone();
+        let profile_arc = Arc::new(RwLock::new(initial));
+
+        let payload = r#"{"content": "not a valid key value pair without equals"}"#;
+
+        let res = transactional_bind_config(&profile_arc, payload);
+        assert!(res.is_err());
+
+        // Invariant: active profile must remain strictly unchanged
+        let in_lock = profile_arc.read().unwrap();
+        assert_eq!(in_lock.profile_id, original_id);
+    }
+
+    #[test]
+    fn transactional_bind_config_fails_closed_on_validation_failure() {
+        let initial = ClientConfigProfile::default();
+        let original_id = initial.profile_id.clone();
+        let profile_arc = Arc::new(RwLock::new(initial));
+
+        // Validation failure: primary relay port is 0
+        let payload = r#"{"content": "profile_id = \"valid-id\"\nprimary_relay_addr = \"127.0.0.1\"\nprimary_relay_port = 0\ndestination = \"d1|D1|webgate://service/d1|Cat|Desc\"\n"}"#;
+
+        let res = transactional_bind_config(&profile_arc, payload);
+        assert!(res.is_err());
+
+        let in_lock = profile_arc.read().unwrap();
+        assert_eq!(in_lock.profile_id, original_id);
+    }
+
+    #[test]
+    fn transactional_bind_config_fails_closed_on_disallowed_destination_scheme() {
+        let initial = ClientConfigProfile::default();
+        let original_id = initial.profile_id.clone();
+        let profile_arc = Arc::new(RwLock::new(initial));
+
+        let payload = r#"{"content": "profile_id = \"valid-id\"\nprimary_relay_addr = \"127.0.0.1\"\nprimary_relay_port = 43111\ndestination = \"d1|D1|file:///etc/passwd|Cat|Desc\"\n"}"#;
+
+        let res = transactional_bind_config(&profile_arc, payload);
+        assert!(res.is_err());
+
+        let in_lock = profile_arc.read().unwrap();
+        assert_eq!(in_lock.profile_id, original_id);
+    }
+
+    #[test]
+    fn transactional_bind_config_fails_closed_on_malformed_json() {
+        let initial = ClientConfigProfile::default();
+        let original_id = initial.profile_id.clone();
+        let profile_arc = Arc::new(RwLock::new(initial));
+
+        let payload = r#"{"content": "unclosed string without end"#;
+
+        let res = transactional_bind_config(&profile_arc, payload);
+        assert!(res.is_err());
+
+        let in_lock = profile_arc.read().unwrap();
+        assert_eq!(in_lock.profile_id, original_id);
+    }
+
+    #[test]
+    fn handle_client_stream_bind_config_http_transactional_roundtrip() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let profile_arc = Arc::new(RwLock::new(ClientConfigProfile::default()));
+        let profile_clone = Arc::clone(&profile_arc);
+
+        let server_thread = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            handle_client_stream(
+                stream,
+                &profile_clone,
+                "dev_test_123",
+                TransportState::Ready,
+                None,
+            );
+        });
+
+        let mut client = TcpStream::connect(addr).unwrap();
+        let valid_body = r#"{"content":"profile_id = \"http-fleet\"\nprofile_name = \"HTTP Fleet\"\nprimary_relay_addr = \"127.0.0.1\"\nprimary_relay_port = 48000\ndestination = \"srv|Srv|webgate://service/s|Cat|Desc\"\n"}"#;
+        let req = format!(
+            "POST /api/bind_config HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            valid_body.len(),
+            valid_body
+        );
+        client.write_all(req.as_bytes()).unwrap();
+
+        let mut resp = String::new();
+        client.read_to_string(&mut resp).unwrap();
+        server_thread.join().unwrap();
+
+        assert!(resp.starts_with("HTTP/1.1 200 OK"), "Expected 200 OK but got: {}", resp);
+        assert!(resp.contains("\"status\":\"ok\""));
+        assert!(resp.contains("\"profile_id\":\"http-fleet\""));
+
+        assert_eq!(profile_arc.read().unwrap().profile_id, "http-fleet");
+    }
+
+    #[test]
+    fn handle_client_stream_bind_config_http_bad_request_fails_closed() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let profile_arc = Arc::new(RwLock::new(ClientConfigProfile::default()));
+        let profile_clone = Arc::clone(&profile_arc);
+
+        let server_thread = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            handle_client_stream(
+                stream,
+                &profile_clone,
+                "dev_test_123",
+                TransportState::Ready,
+                None,
+            );
+        });
+
+        let mut client = TcpStream::connect(addr).unwrap();
+        let invalid_body = r#"{"content":"primary_relay_port = not_a_number\n"}"#;
+        let req = format!(
+            "POST /api/bind_config HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            invalid_body.len(),
+            invalid_body
+        );
+        client.write_all(req.as_bytes()).unwrap();
+
+        let mut resp = String::new();
+        client.read_to_string(&mut resp).unwrap();
+        server_thread.join().unwrap();
+
+        assert!(resp.starts_with("HTTP/1.1 400 Bad Request"), "Expected 400 Bad Request but got: {}", resp);
+        assert!(resp.contains("\"status\":\"error\""));
+
+        assert_eq!(profile_arc.read().unwrap().profile_id, "default-fleet");
     }
 }
