@@ -154,8 +154,8 @@ impl Sha512 {
 
     fn process_block(&mut self, block: &[u8; 128]) {
         let mut w = [0u64; 80];
-        for (i, chunk) in block.chunks_exact(8).enumerate() {
-            w[i] = u64::from_be_bytes(chunk.try_into().unwrap_or([0u8; 8]));
+        for (i, chunk) in block.as_chunks::<8>().0.iter().enumerate() {
+            w[i] = u64::from_be_bytes(*chunk);
         }
 
         for i in 16..80 {
@@ -701,8 +701,8 @@ const ORDER_L: [u64; 4] = [
 #[must_use]
 fn scalar_reduce_64(input: &[u8; 64]) -> [u8; 32] {
     let mut num = [0u64; 8];
-    for (i, chunk) in input.chunks_exact(8).enumerate() {
-        num[i] = u64::from_le_bytes(chunk.try_into().unwrap_or([0u8; 8]));
+    for (i, chunk) in input.as_chunks::<8>().0.iter().enumerate() {
+        num[i] = u64::from_le_bytes(*chunk);
     }
 
     let mut rem = [0u64; 4];
