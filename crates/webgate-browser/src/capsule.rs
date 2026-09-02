@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 
-use crate::{BrowserKind, BrowserLifecycleEvent, BrowserState};
+use crate::adapter::{ServoEmbeddingAdapter, ServoEmbeddingConfig};
+use crate::{BrowserConfig, BrowserKind, BrowserLifecycleEvent, BrowserState, ProtectedBrowser};
 use std::net::SocketAddr;
+use webgate_core::Platform;
 use webgate_core::policy::{NavigationPolicy, PolicyError, ValidatedUrl};
 
 /// Failures encountered when configuring, launching, or navigating the browser capsule.
@@ -36,7 +38,7 @@ impl CapsuleProxyConfig {
 }
 
 /// Isolated browser capsule running with strict fail-closed network policies.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct BrowserCapsule {
     kind: BrowserKind,
     state: BrowserState,
@@ -44,6 +46,7 @@ pub struct BrowserCapsule {
     navigation_policy: NavigationPolicy,
     current_url: Option<ValidatedUrl>,
     cache_purged: bool,
+    adapter: Option<ServoEmbeddingAdapter>,
 }
 
 impl BrowserCapsule {
@@ -56,6 +59,7 @@ impl BrowserCapsule {
             navigation_policy,
             current_url: None,
             cache_purged: false,
+            adapter: None,
         }
     }
 
@@ -79,6 +83,11 @@ impl BrowserCapsule {
         self.cache_purged
     }
 
+    #[must_use]
+    pub fn adapter(&self) -> Option<&ServoEmbeddingAdapter> {
+        self.adapter.as_ref()
+    }
+
     /// Attaches the mandatory loopback proxy. All outbound traffic MUST flow through it.
     pub fn attach_proxy(&mut self, endpoint: SocketAddr) -> Result<(), CapsuleError> {
         let config = CapsuleProxyConfig::new(endpoint)?;
@@ -88,11 +97,21 @@ impl BrowserCapsule {
 
     /// Starts the browser capsule. Fails closed if no verified loopback proxy is attached.
     pub fn start(&mut self) -> Result<(), CapsuleError> {
-        if self.proxy_config.is_none() {
+        let Some(proxy) = self.proxy_config else {
             self.state = BrowserState::Failed;
             return Err(CapsuleError::ProxyMissingFailClosed);
+        };
+
+        let browser_cfg = BrowserConfig::new(Platform::current());
+        let servo_cfg = ServoEmbeddingConfig::new(browser_cfg).with_proxy(proxy.proxy_endpoint);
+        let mut adapter = ServoEmbeddingAdapter::new(servo_cfg);
+
+        if let Err(e) = adapter.initialize() {
+            self.state = BrowserState::Failed;
+            return Err(CapsuleError::InvalidProxyAddress(e.to_string()));
         }
 
+        self.adapter = Some(adapter);
         self.state = BrowserState::Ready;
         Ok(())
     }
@@ -108,8 +127,32 @@ impl BrowserCapsule {
             .validate_url(raw_url)
             .map_err(CapsuleError::NavigationPolicyViolation)?;
 
+        if let Some(adapter) = &mut self.adapter {
+            let _ = adapter.load_url(raw_url);
+        }
+
         self.current_url = Some(validated.clone());
         Ok(validated)
+    }
+
+    /// Dispatches a subresource fetch through the verified proxy pipeline.
+    pub fn dispatch_subresource_fetch(&self, resource_url: &str) -> Result<String, CapsuleError> {
+        if self.state != BrowserState::Ready {
+            return Err(CapsuleError::BrowserNotReady(self.state));
+        }
+
+        let validated = self
+            .navigation_policy
+            .validate_url(resource_url)
+            .map_err(CapsuleError::NavigationPolicyViolation)?;
+
+        let Some(adapter) = &self.adapter else {
+            return Err(CapsuleError::BrowserNotReady(self.state));
+        };
+
+        adapter
+            .execute_proxied_fetch(&validated.as_url_string())
+            .map_err(|e| CapsuleError::InvalidProxyAddress(e.to_string()))
     }
 
     /// Handles platform lifecycle events (Android pause/resume/recreate/memory-trim).
@@ -121,6 +164,9 @@ impl BrowserCapsule {
             BrowserLifecycleEvent::Pause => {
                 if self.state == BrowserState::Ready {
                     self.state = BrowserState::Paused;
+                    if let Some(adapter) = &mut self.adapter {
+                        let _ = adapter.handle_lifecycle_event(BrowserLifecycleEvent::Pause);
+                    }
                     Ok(())
                 } else {
                     Err(CapsuleError::InvalidLifecycleTransition(
@@ -135,6 +181,9 @@ impl BrowserCapsule {
                         self.state = BrowserState::Failed;
                         return Err(CapsuleError::ProxyMissingFailClosed);
                     }
+                    if let Some(adapter) = &mut self.adapter {
+                        let _ = adapter.handle_lifecycle_event(BrowserLifecycleEvent::Resume);
+                    }
                     self.state = BrowserState::Ready;
                     Ok(())
                 } else {
@@ -143,18 +192,31 @@ impl BrowserCapsule {
                     ))
                 }
             }
-            BrowserLifecycleEvent::SaveState => Ok(()),
+            BrowserLifecycleEvent::SaveState => {
+                if let Some(adapter) = &mut self.adapter {
+                    let _ = adapter.handle_lifecycle_event(BrowserLifecycleEvent::SaveState);
+                }
+                Ok(())
+            }
             BrowserLifecycleEvent::RestoreState(raw_url) => {
                 // When restoring state (e.g. after activity recreation), validate URL strictly
                 let validated = self
                     .navigation_policy
                     .validate_url(&raw_url)
                     .map_err(CapsuleError::NavigationPolicyViolation)?;
+                if let Some(adapter) = &mut self.adapter {
+                    let _ = adapter.handle_lifecycle_event(BrowserLifecycleEvent::RestoreState(
+                        raw_url.clone(),
+                    ));
+                }
                 self.current_url = Some(validated);
                 Ok(())
             }
             BrowserLifecycleEvent::LowMemory => {
                 self.cache_purged = true;
+                if let Some(adapter) = &mut self.adapter {
+                    let _ = adapter.handle_lifecycle_event(BrowserLifecycleEvent::LowMemory);
+                }
                 Ok(())
             }
         }
@@ -162,10 +224,14 @@ impl BrowserCapsule {
 
     /// Gracefully terminates the browser capsule and clears runtime state.
     pub fn shutdown(&mut self) {
+        if let Some(adapter) = &mut self.adapter {
+            adapter.shutdown();
+        }
         self.state = BrowserState::Stopped;
         self.current_url = None;
         self.proxy_config = None;
         self.cache_purged = false;
+        self.adapter = None;
     }
 }
 
@@ -183,6 +249,7 @@ mod tests {
         assert_eq!(capsule.attach_proxy(loopback), Ok(()));
         assert_eq!(capsule.start(), Ok(()));
         assert_eq!(capsule.state(), BrowserState::Ready);
+        assert!(capsule.adapter().is_some());
     }
 
     #[test]
@@ -206,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn capsule_navigates_to_valid_service_and_blocks_disallowed() {
+    fn capsule_navigates_to_valid_service_and_dispatches_subresource() {
         let mut capsule = BrowserCapsule::new(BrowserKind::Servo, NavigationPolicy::default());
         let loopback = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000);
         capsule.attach_proxy(loopback).unwrap();
@@ -219,9 +286,23 @@ mod tests {
         assert_eq!(nav.target_service_slug(), Some("factory"));
         assert_eq!(capsule.current_url(), Some(&nav));
 
+        // Proxied subresource fetch
+        let sub = capsule
+            .dispatch_subresource_fetch("webgate://service/factory/static/app.js")
+            .unwrap();
+        assert!(sub.contains("proxied_response"));
+
         // Negative navigation (file:// scheme)
         assert!(matches!(
             capsule.navigate("file:///C:/Windows/system.ini"),
+            Err(CapsuleError::NavigationPolicyViolation(
+                PolicyError::DisallowedScheme(_)
+            ))
+        ));
+
+        // Negative subresource fetch (disallowed scheme)
+        assert!(matches!(
+            capsule.dispatch_subresource_fetch("file:///C:/Windows/malicious.js"),
             Err(CapsuleError::NavigationPolicyViolation(
                 PolicyError::DisallowedScheme(_)
             ))

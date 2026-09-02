@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::{BrowserConfig, BrowserKind, BrowserLifecycleEvent, BrowserState, ProtectedBrowser};
+use std::net::SocketAddr;
 
 /// Rendering viewport dimensions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +26,7 @@ pub struct ServoEmbeddingConfig {
     pub viewport: ViewportSize,
     pub user_agent_suffix: String,
     pub javascript_enabled: bool,
+    pub proxy_endpoint: Option<SocketAddr>,
 }
 
 impl ServoEmbeddingConfig {
@@ -35,7 +37,14 @@ impl ServoEmbeddingConfig {
             viewport: ViewportSize::default(),
             user_agent_suffix: "WebGate-Servo/1.0".to_string(),
             javascript_enabled: true,
+            proxy_endpoint: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_proxy(mut self, proxy_endpoint: SocketAddr) -> Self {
+        self.proxy_endpoint = Some(proxy_endpoint);
+        self
     }
 }
 
@@ -62,9 +71,23 @@ impl ServoEmbeddingAdapter {
     }
 
     /// Initializes the embedder engine and event loop.
+    /// Fails closed if loopback proxy endpoint is missing or non-loopback.
     pub fn initialize(&mut self) -> Result<(), &'static str> {
+        let Some(proxy) = self.config.proxy_endpoint else {
+            self.state = BrowserState::Failed;
+            return Err("proxy configuration required: fail-closed without verified loopback proxy");
+        };
+        if !proxy.ip().is_loopback() {
+            self.state = BrowserState::Failed;
+            return Err("direct egress forbidden: proxy endpoint must be loopback");
+        }
+        if proxy.port() == 0 {
+            self.state = BrowserState::Failed;
+            return Err("invalid proxy port: port cannot be zero");
+        }
+
         self.state = BrowserState::Starting;
-        // Concrete Servo initialization hook
+        // Concrete Servo initialization hook bounded strictly by loopback proxy
         self.state = BrowserState::Ready;
         Ok(())
     }
@@ -77,6 +100,22 @@ impl ServoEmbeddingAdapter {
         self.active_url = Some(url.to_string());
         self.page_title = Some("Corporate Service — WebGate".to_string());
         Ok(())
+    }
+
+    /// Dispatches a subresource fetch through the engine's proxy pipeline.
+    pub fn execute_proxied_fetch(&self, target_url: &str) -> Result<String, &'static str> {
+        if self.state != BrowserState::Ready {
+            return Err("cannot fetch subresource: engine not in ready state");
+        }
+        let Some(proxy) = self.config.proxy_endpoint else {
+            return Err("proxy configuration missing during subresource fetch");
+        };
+        if !proxy.ip().is_loopback() || proxy.port() == 0 {
+            return Err("invalid proxy during subresource fetch");
+        }
+
+        // Return simulated verified proxied response
+        Ok(format!("proxied_response:{target_url}"))
     }
 
     /// Handles platform lifecycle events (Android pause/resume/memory trim).
@@ -95,6 +134,14 @@ impl ServoEmbeddingAdapter {
             }
             BrowserLifecycleEvent::Resume => {
                 if self.state == BrowserState::Paused {
+                    let Some(proxy) = self.config.proxy_endpoint else {
+                        self.state = BrowserState::Failed;
+                        return Err("proxy configuration required on resume");
+                    };
+                    if !proxy.ip().is_loopback() || proxy.port() == 0 {
+                        self.state = BrowserState::Failed;
+                        return Err("invalid proxy on resume");
+                    }
                     self.state = BrowserState::Ready;
                     Ok(())
                 } else {
@@ -133,6 +180,11 @@ impl ServoEmbeddingAdapter {
     pub const fn is_cache_cleared(&self) -> bool {
         self.cache_cleared
     }
+
+    #[must_use]
+    pub fn proxy_endpoint(&self) -> Option<SocketAddr> {
+        self.config.proxy_endpoint
+    }
 }
 
 impl ProtectedBrowser for ServoEmbeddingAdapter {
@@ -156,12 +208,39 @@ impl ProtectedBrowser for ServoEmbeddingAdapter {
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
     use webgate_core::Platform;
+
+    fn test_loopback_proxy() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41080)
+    }
+
+    #[test]
+    fn adapter_fails_closed_without_proxy() {
+        let b_cfg = BrowserConfig::new(Platform::Windows);
+        let config = ServoEmbeddingConfig::new(b_cfg);
+        let mut adapter = ServoEmbeddingAdapter::new(config);
+
+        assert_eq!(adapter.state(), BrowserState::Stopped);
+        assert!(adapter.initialize().is_err());
+        assert_eq!(adapter.state(), BrowserState::Failed);
+    }
+
+    #[test]
+    fn adapter_rejects_non_loopback_proxy() {
+        let b_cfg = BrowserConfig::new(Platform::Windows);
+        let public_proxy = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1)), 8080);
+        let config = ServoEmbeddingConfig::new(b_cfg).with_proxy(public_proxy);
+        let mut adapter = ServoEmbeddingAdapter::new(config);
+
+        assert!(adapter.initialize().is_err());
+        assert_eq!(adapter.state(), BrowserState::Failed);
+    }
 
     #[test]
     fn adapter_lifecycle_and_navigation() {
         let b_cfg = BrowserConfig::new(Platform::Windows);
-        let config = ServoEmbeddingConfig::new(b_cfg);
+        let config = ServoEmbeddingConfig::new(b_cfg).with_proxy(test_loopback_proxy());
         let mut adapter = ServoEmbeddingAdapter::new(config);
 
         assert_eq!(adapter.kind(), BrowserKind::Servo);
@@ -174,6 +253,14 @@ mod tests {
         assert_eq!(adapter.active_url(), Some("webgate://service/docs"));
         assert_eq!(adapter.page_title(), Some("Corporate Service — WebGate"));
 
+        let fetch_res = adapter
+            .execute_proxied_fetch("https://docs.webgate.local/api/v1")
+            .unwrap();
+        assert_eq!(
+            fetch_res,
+            "proxied_response:https://docs.webgate.local/api/v1"
+        );
+
         adapter.shutdown();
         assert_eq!(adapter.state(), BrowserState::Stopped);
         assert_eq!(adapter.active_url(), None);
@@ -182,7 +269,7 @@ mod tests {
     #[test]
     fn adapter_handles_android_pause_resume_and_memory_trim() {
         let b_cfg = BrowserConfig::new(Platform::Android);
-        let config = ServoEmbeddingConfig::new(b_cfg);
+        let config = ServoEmbeddingConfig::new(b_cfg).with_proxy(test_loopback_proxy());
         let mut adapter = ServoEmbeddingAdapter::new(config);
 
         adapter.initialize().unwrap();
