@@ -1,0 +1,53 @@
+name: clippy-fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/clippy-fix.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, Node 24
+        with:
+          persist-credentials: true
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+      - name: Apply lint-compatible equivalent
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('crates/webgate-core/src/ed25519.rs')
+          s = p.read_text()
+          old1 = 'for (i, chunk) in block.chunks_exact(8).enumerate() {'
+          new1 = 'for (i, chunk) in block.as_chunks::<8>().0.iter().enumerate() {'
+          old2 = 'for (i, chunk) in input.chunks_exact(8).enumerate() {'
+          new2 = 'for (i, chunk) in input.as_chunks::<8>().0.iter().enumerate() {'
+          assert s.count(old1) == 1, s.count(old1)
+          assert s.count(old2) == 1, s.count(old2)
+          s = s.replace(old1, new1).replace(old2, new2)
+          p.write_text(s)
+          PY
+          cargo fmt --all
+      - name: Verify core vectors and workspace clippy
+        run: |
+          cargo test -p webgate-core --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Remove diagnostic helpers and commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/clippy-fix.yml .github/workflows/clippy-diagnostic.yml
+          git add crates/webgate-core/src/ed25519.rs
+          git commit -m "fix(core): satisfy stable clippy without crypto semantic change"
+          git push origin HEAD:main
