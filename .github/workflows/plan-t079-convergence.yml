@@ -23,10 +23,8 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           p = Path('MASTER_PLAN.md')
           s = p.read_text()
-
           replacements = {
               '- **U-F-001 — Client navigation can report false success:** CRITICAL → T-079. `/api/navigate` returns HTTP 200 with an internal `ok` field, while current UI treats `res.ok` as session success and does not require `data.ok`.': '- **U-F-001 — Client navigation can report false success:** RESOLVED by T-079. Frontend success now requires authoritative structured navigation state rather than HTTP transport success alone.',
               '- **U-F-002 — Network/backend failure can trigger synthetic navigation success:** CRITICAL → T-079. The client UI currently has a timed fallback that renders a successful capsule/session message after failed `/api/navigate` communication.': '- **U-F-002 — Network/backend failure can trigger synthetic navigation success:** RESOLVED by T-079. Timeout/network/malformed/4xx/5xx paths remain failed/degraded and cannot synthesize protected success.',
@@ -39,31 +37,25 @@ jobs:
               count = s.count(old)
               assert count == 1, (old[:100], count)
               s = s.replace(old, new, 1)
-
-          exit_text = '''### Exit contract
-
-The UI cannot display a protected-success state unless a real owning backend/runtime proof exists. Killing the local core or returning any negative navigation/config result must produce an unmistakable failure/degraded state and zero synthetic success text.
-'''
-          evidence_text = '''### Exit contract
-
-The UI cannot display a protected-success state unless a real owning backend/runtime proof exists. Killing the local core or returning any negative navigation/config result must produce an unmistakable failure/degraded state and zero synthetic success text.
-
-### Qualified evidence — 2026-09-02
-
-- `/api/navigate` distinguishes invalid request/policy deny/protected-transport unavailable/`transport_ready`; HTTP success alone is not a protected-session proof.
-- `client_ui_truth_patch.js` owns authoritative UI reconciliation: explicit core-offline state, no silent realistic mock profile, backend-confirmed config binding and durable critical status surfaces.
-- `scripts/tests/test_client_ui_truth.py` permanently guards the source-level truth contract against reintroduction of the known synthetic-success patterns.
-- `scripts/test_client_ui_browser.py` executes the real `client_ui.html` + truth controller in headless Chromium against controlled local `/api/*` responses.
-- Browser qualification passes seven branches: core offline, valid `transport_ready`, `200 + ok:false`, HTTP 503, malformed JSON, connection loss and rejected configuration; every negative branch proves zero fabricated protected-success text.
-- Exact qualified main state `53374681f7f88f2c36b1063a6ee9018f88403fa9`, GitHub Actions `rust-ci` run `33680298245`: browser truth qualification, project-manager tests/contract, architecture boundary check, lockfile, Rust fmt/check/test/clippy, Go module/format/vet/test/CGO=0 portability and dependency policy all PASS.
-- Temporary diagnostic workflows used while repairing the browser harness were removed; the Chromium qualification remains a permanent step in the normal `rust-ci` verify job.
-- T-079 intentionally proves truthful route/readiness semantics only. A real protected browser instance is not called `Open` until T-080 owns and qualifies `BrowserCapsule` orchestration.
-'''
-          count = s.count(exit_text)
-          assert count >= 1, count
-          # The first matching exit contract after T-079 is unique by exact wording.
+          exit_text = (
+              '### Exit contract\n\n'
+              'The UI cannot display a protected-success state unless a real owning backend/runtime proof exists. '
+              'Killing the local core or returning any negative navigation/config result must produce an unmistakable '
+              'failure/degraded state and zero synthetic success text.\n'
+          )
+          evidence_text = exit_text + (
+              '\n### Qualified evidence — 2026-09-02\n\n'
+              '- `/api/navigate` distinguishes invalid request/policy deny/protected-transport unavailable/`transport_ready`; HTTP success alone is not a protected-session proof.\n'
+              '- `client_ui_truth_patch.js` owns authoritative UI reconciliation: explicit core-offline state, no silent realistic mock profile, backend-confirmed config binding and durable critical status surfaces.\n'
+              '- `scripts/tests/test_client_ui_truth.py` permanently guards the source-level truth contract against reintroduction of the known synthetic-success patterns.\n'
+              '- `scripts/test_client_ui_browser.py` executes the real `client_ui.html` + truth controller in headless Chromium against controlled local `/api/*` responses.\n'
+              '- Browser qualification passes seven branches: core offline, valid `transport_ready`, `200 + ok:false`, HTTP 503, malformed JSON, connection loss and rejected configuration; every negative branch proves zero fabricated protected-success text.\n'
+              '- Exact qualified main state `53374681f7f88f2c36b1063a6ee9018f88403fa9`, GitHub Actions `rust-ci` run `33680298245`: browser truth qualification, project-manager tests/contract, architecture boundary check, lockfile, Rust fmt/check/test/clippy, Go module/format/vet/test/CGO=0 portability and dependency policy all PASS.\n'
+              '- Temporary diagnostic workflows used while repairing the browser harness were removed; the Chromium qualification remains a permanent step in the normal `rust-ci` verify job.\n'
+              '- T-079 intentionally proves truthful route/readiness semantics only. A real protected browser instance is not called `Open` until T-080 owns and qualifies `BrowserCapsule` orchestration.\n'
+          )
+          assert s.count(exit_text) >= 1, s.count(exit_text)
           s = s.replace(exit_text, evidence_text, 1)
-
           p.write_text(s)
           PY
       - name: Commit plan convergence and remove helper
