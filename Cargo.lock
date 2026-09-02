@@ -17,6 +17,7 @@ name = "webgate-browser"
 version = "0.1.0"
 dependencies = [
  "webgate-core",
+ "webgate-transport",
 ]
 
 [[package]]

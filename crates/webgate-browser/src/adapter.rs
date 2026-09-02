@@ -75,7 +75,9 @@ impl ServoEmbeddingAdapter {
     pub fn initialize(&mut self) -> Result<(), &'static str> {
         let Some(proxy) = self.config.proxy_endpoint else {
             self.state = BrowserState::Failed;
-            return Err("proxy configuration required: fail-closed without verified loopback proxy");
+            return Err(
+                "proxy configuration required: fail-closed without verified loopback proxy",
+            );
         };
         if !proxy.ip().is_loopback() {
             self.state = BrowserState::Failed;

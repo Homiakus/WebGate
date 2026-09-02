@@ -13,10 +13,13 @@ use webgate_browser::capsule::BrowserCapsule;
 use webgate_core::broker::{
     BrokerCapability, BrokerRequest, BrokerRequestPayload, BrokerSecurityGate,
 };
-use webgate_core::config::{ClientConfigProfile, ConfigError};
+use webgate_core::config::{ClientConfigProfile, ConfigError, RelayEndpointConfig};
 use webgate_platform::current_platform;
 use webgate_platform::keystore::{DeviceKeyStore, PersistentFileDeviceKeyStore};
-use webgate_transport::failover::{FailoverConfig, TransportFailoverController};
+use webgate_transport::dual_failover::{
+    DualRelayConfig, DualRelayError, DualRelayFailoverTransport,
+};
+use webgate_transport::failover::FailoverConfig;
 use webgate_transport::restricted_socks5::{
     RestrictedProxyError, RestrictedSocks5Config, RestrictedSocks5Transport,
 };
@@ -24,31 +27,6 @@ use webgate_transport::{LocalProxyEndpoint, TransportProvider, TransportState};
 
 const CLIENT_UI_HTML: &str = include_str!("client_ui.html");
 const PRIMARY_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// Configuration-only fallback placeholder.
-///
-/// T-036 supplies a real primary provider. A configured fallback address/port is
-/// still not proof that an independent protected transport exists; T-042 owns it.
-#[derive(Debug)]
-struct ConfiguredRelayTransport {
-    name: String,
-}
-
-impl TransportProvider for ConfiguredRelayTransport {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn state(&self) -> TransportState {
-        TransportState::Offline
-    }
-
-    fn local_proxy(&self) -> Option<LocalProxyEndpoint> {
-        None
-    }
-
-    fn stop(&mut self) {}
-}
 
 fn load_client_profile(config_path: Option<&str>) -> Result<ClientConfigProfile, ConfigError> {
     match config_path {
@@ -68,6 +46,24 @@ fn build_primary_transport(
         allowed_domains: profile.allowed_domains.clone(),
         allowed_ports: vec![443],
         connect_timeout: PRIMARY_PROXY_CONNECT_TIMEOUT,
+    })
+}
+
+fn build_dual_relay_transport(
+    profile: &ClientConfigProfile,
+    fallback: &RelayEndpointConfig,
+) -> Result<DualRelayFailoverTransport, DualRelayError> {
+    DualRelayFailoverTransport::new(DualRelayConfig {
+        name: format!("{} / {}", profile.primary_relay.name, fallback.name),
+        primary_upstream_host: profile.primary_relay.address.clone(),
+        primary_upstream_port: profile.primary_relay.port,
+        fallback_upstream_host: fallback.address.clone(),
+        fallback_upstream_port: fallback.port,
+        local_listen_port: 0,
+        allowed_domains: profile.allowed_domains.clone(),
+        allowed_ports: vec![443],
+        connect_timeout: PRIMARY_PROXY_CONNECT_TIMEOUT,
+        failover_config: FailoverConfig::default(),
     })
 }
 
@@ -468,36 +464,44 @@ fn main() {
         }
     };
 
-    // T-036 primary path: the browser-facing listener is real, loopback-only and
-    // destination restricted. It never direct-dials protected destinations; every
-    // allowed CONNECT is delegated to the explicitly configured local SOCKS5 sidecar.
-    let mut primary = match build_primary_transport(&profile) {
-        Ok(primary) => primary,
-        Err(error) => {
-            eprintln!("[Транспорт] Некорректная политика primary proxy: {error:?}");
-            return;
+    // T-042: Real dual-transport / dual-relay failover path.
+    // When a fallback relay is configured, initialize DualRelayFailoverTransport with
+    // dynamic active/standby relay failover and loopback proxy containment.
+    let (transport_state, proxy_ep) = if let Some(ref fallback) = profile.fallback_relay {
+        match build_dual_relay_transport(&profile, fallback) {
+            Ok(mut dual_transport) => {
+                let ep = dual_transport.start_proxy().ok();
+                let state = dual_transport.state();
+                if ep.is_none() {
+                    eprintln!(
+                        "[Транспорт] Dual-relay upstreams не подтверждены; protected proxy остаётся OFFLINE."
+                    );
+                }
+                (state, ep)
+            }
+            Err(error) => {
+                eprintln!("[Транспорт] Некорректная конфигурация dual relay: {error:?}");
+                (TransportState::Offline, None)
+            }
+        }
+    } else {
+        match build_primary_transport(&profile) {
+            Ok(mut primary) => {
+                let ep = primary.start_proxy().ok();
+                let state = primary.state();
+                if ep.is_none() {
+                    eprintln!(
+                        "[Транспорт] Primary sidecar не подтверждён; protected proxy остаётся OFFLINE."
+                    );
+                }
+                (state, ep)
+            }
+            Err(error) => {
+                eprintln!("[Транспорт] Некорректная политика primary proxy: {error:?}");
+                (TransportState::Offline, None)
+            }
         }
     };
-    if let Err(error) = primary.start_proxy() {
-        eprintln!(
-            "[Транспорт] Primary sidecar не подтверждён ({error:?}); protected proxy остаётся OFFLINE."
-        );
-    }
-
-    // T-042 owns a materially independent fallback transport. Configuration alone
-    // is not readiness, so the fallback deliberately remains Offline here.
-    let fallback = ConfiguredRelayTransport {
-        name: profile
-            .fallback_relay
-            .as_ref()
-            .map(|r| r.name.clone())
-            .unwrap_or_else(|| "Relay-Beta (Резервный)".to_string()),
-    };
-
-    let mut transport_ctrl =
-        TransportFailoverController::new(primary, fallback, FailoverConfig::default());
-    let transport_state = transport_ctrl.start();
-    let proxy_ep = transport_ctrl.active_proxy_endpoint();
 
     if cli_only {
         print_editorial_banner(&profile, &target_destination, &device_id);
@@ -614,12 +618,18 @@ mod tests {
     }
 
     #[test]
-    fn configured_fallback_is_offline_without_backend() {
-        let transport = ConfiguredRelayTransport {
-            name: "configured-only".to_string(),
+    fn dual_relay_transport_rejects_nonloopback_fallback() {
+        let profile = ClientConfigProfile::default();
+        let fallback = RelayEndpointConfig {
+            name: "non-loopback-fallback".to_string(),
+            address: "192.0.2.20".to_string(),
+            port: 4443,
         };
-        assert_eq!(transport.state(), TransportState::Offline);
-        assert_eq!(transport.local_proxy(), None);
+        let result = build_dual_relay_transport(&profile, &fallback);
+        assert!(matches!(
+            result,
+            Err(DualRelayError::FallbackUpstreamNotLoopback)
+        ));
     }
 
     #[test]

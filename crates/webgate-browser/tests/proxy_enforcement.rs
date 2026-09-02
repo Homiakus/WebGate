@@ -54,9 +54,7 @@ fn browser_capsule_enforces_proxy_and_subresource_containment() {
     assert!(capsule.adapter().is_some());
 
     // Navigation to allowed destination
-    let entry = capsule
-        .navigate("webgate://service/portal/index")
-        .unwrap();
+    let entry = capsule.navigate("webgate://service/portal/index").unwrap();
     assert_eq!(entry.target_service_slug(), Some("portal"));
 
     // Subresource fetch inside allowed policy
@@ -181,4 +179,105 @@ fn qualification_suite_runs_spa_csr_ssr_scenarios() {
     let rep3 = runner.run_scenario(&ssr_scenario).unwrap();
     assert!(rep3.passed);
     assert!(rep3.proxy_enforced);
+}
+
+#[test]
+fn browser_capsule_with_dual_relay_failover_proxy_handles_relay_failure() {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
+    use std::time::Duration;
+    use webgate_transport::TransportProvider;
+    use webgate_transport::dual_failover::{DualRelayConfig, DualRelayFailoverTransport};
+    use webgate_transport::failover::{FailoverConfig, TransportRole};
+
+    // Spawn Fake Relay A
+    let ln_a = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr_a = ln_a.local_addr().unwrap();
+    let shut_a = Arc::new(AtomicBool::new(false));
+    let shut_a_clone = Arc::clone(&shut_a);
+    let handle_a = thread::spawn(move || {
+        while !shut_a_clone.load(Ordering::Acquire) {
+            let (mut s, _) = match ln_a.accept() {
+                Ok(r) => r,
+                Err(_) => break,
+            };
+            let mut buf = [0_u8; 128];
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(&[0x05, 0x00]);
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0]);
+        }
+    });
+
+    // Spawn Fake Relay B
+    let ln_b = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr_b = ln_b.local_addr().unwrap();
+    let shut_b = Arc::new(AtomicBool::new(false));
+    let shut_b_clone = Arc::clone(&shut_b);
+    let handle_b = thread::spawn(move || {
+        while !shut_b_clone.load(Ordering::Acquire) {
+            let (mut s, _) = match ln_b.accept() {
+                Ok(r) => r,
+                Err(_) => break,
+            };
+            let mut buf = [0_u8; 128];
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(&[0x05, 0x00]);
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0]);
+        }
+    });
+
+    let config = DualRelayConfig {
+        name: "BrowserCapsule-Failover".to_string(),
+        primary_upstream_host: "127.0.0.1".to_string(),
+        primary_upstream_port: addr_a.port(),
+        fallback_upstream_host: "127.0.0.1".to_string(),
+        fallback_upstream_port: addr_b.port(),
+        local_listen_port: 0,
+        allowed_domains: vec!["service".to_string()],
+        allowed_ports: vec![443],
+        connect_timeout: Duration::from_millis(300),
+        failover_config: FailoverConfig {
+            max_consecutive_failures: 1,
+            high_latency_threshold_ms: 1000,
+            switchback_cooldown_sec: 10,
+        },
+    };
+
+    let mut transport = DualRelayFailoverTransport::new(config).unwrap();
+    let proxy_ep = transport.start_proxy().unwrap();
+
+    let mut capsule = BrowserCapsule::new(
+        BrowserKind::Servo,
+        NavigationPolicy::new(vec!["service".to_string()]),
+    );
+    capsule.attach_proxy(proxy_ep.socket_addr()).unwrap();
+    capsule.start().unwrap();
+    assert_eq!(capsule.state(), BrowserState::Ready);
+
+    // Initial navigation succeeds through Relay A
+    let nav = capsule
+        .navigate("webgate://service/finance/overview")
+        .unwrap();
+    assert_eq!(nav.target_service_slug(), Some("finance"));
+    assert_eq!(transport.active_role(), Some(TransportRole::Primary));
+
+    // Relay A crashes
+    shut_a.store(true, Ordering::Release);
+    let _ = std::net::TcpStream::connect_timeout(&addr_a, Duration::from_millis(50));
+    let _ = handle_a.join();
+
+    // Subresource fetch through same proxy automatically triggers failover to Relay B
+    let sub = capsule
+        .dispatch_subresource_fetch("webgate://service/finance/chart.js")
+        .unwrap();
+    assert!(sub.contains("proxied_response"));
+
+    transport.stop();
+    shut_b.store(true, Ordering::Release);
+    let _ = std::net::TcpStream::connect_timeout(&addr_b, Duration::from_millis(50));
+    let _ = handle_b.join();
 }

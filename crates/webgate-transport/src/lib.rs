@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
+pub mod dual_failover;
 pub mod failover;
 pub mod relay;
 pub mod restricted_socks5;
+pub(crate) mod socks5_proto;
 
 use std::net::{IpAddr, SocketAddr};
 
