@@ -195,7 +195,9 @@ impl ClientConfigProfile {
     /// Parses a simple key-value / TOML-like profile format.
     pub fn from_toml_str(content: &str) -> Result<Self, ConfigError> {
         if content.trim().is_empty() {
-            return Err(ConfigError::ParseError("Config content is empty".to_string()));
+            return Err(ConfigError::ParseError(
+                "Config content is empty".to_string(),
+            ));
         }
 
         let mut profile = Self::default();
@@ -218,18 +220,16 @@ impl ClientConfigProfile {
                     "version" => profile.version = val.to_string(),
                     "device_label" => profile.device_label = val.to_string(),
                     "primary_relay_addr" => profile.primary_relay.address = val.to_string(),
-                    "primary_relay_port" => {
-                        match val.parse::<u16>() {
-                            Ok(p) => profile.primary_relay.port = p,
-                            Err(_) => {
-                                return Err(ConfigError::ParseError(format!(
-                                    "Invalid primary_relay_port '{}' on line {}",
-                                    val,
-                                    line_no + 1
-                                )));
-                            }
+                    "primary_relay_port" => match val.parse::<u16>() {
+                        Ok(p) => profile.primary_relay.port = p,
+                        Err(_) => {
+                            return Err(ConfigError::ParseError(format!(
+                                "Invalid primary_relay_port '{}' on line {}",
+                                val,
+                                line_no + 1
+                            )));
                         }
-                    }
+                    },
                     "fallback_relay_addr" => {
                         if let Some(ref mut fb) = profile.fallback_relay {
                             fb.address = val.to_string();
@@ -370,7 +370,10 @@ mod tests {
             profile_id: "   ".to_string(),
             ..Default::default()
         };
-        assert!(matches!(profile.validate(), Err(ConfigError::ValidationError(_))));
+        assert!(matches!(
+            profile.validate(),
+            Err(ConfigError::ValidationError(_))
+        ));
     }
 
     #[test]
@@ -383,7 +386,10 @@ mod tests {
             },
             ..Default::default()
         };
-        assert!(matches!(profile.validate(), Err(ConfigError::InvalidRelayAddress(_))));
+        assert!(matches!(
+            profile.validate(),
+            Err(ConfigError::InvalidRelayAddress(_))
+        ));
     }
 
     #[test]
@@ -396,19 +402,27 @@ mod tests {
             category: "Bad".to_string(),
             description: "".to_string(),
         });
-        assert!(matches!(profile.validate(), Err(ConfigError::ValidationError(_))));
+        assert!(matches!(
+            profile.validate(),
+            Err(ConfigError::ValidationError(_))
+        ));
     }
 
     #[test]
     fn test_parse_rejects_invalid_syntax() {
         let raw = "not a valid key value pair";
-        assert!(matches!(ClientConfigProfile::from_toml_str(raw), Err(ConfigError::ParseError(_))));
+        assert!(matches!(
+            ClientConfigProfile::from_toml_str(raw),
+            Err(ConfigError::ParseError(_))
+        ));
     }
 
     #[test]
     fn test_parse_rejects_invalid_port() {
         let raw = "primary_relay_port = notanumber";
-        assert!(matches!(ClientConfigProfile::from_toml_str(raw), Err(ConfigError::ParseError(_))));
+        assert!(matches!(
+            ClientConfigProfile::from_toml_str(raw),
+            Err(ConfigError::ParseError(_))
+        ));
     }
 }
-

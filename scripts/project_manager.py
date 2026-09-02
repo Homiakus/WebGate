@@ -759,7 +759,7 @@ def verify(*, dry_run: bool = False) -> int:
         (["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"], ROOT, "Rust Clippy"),
         (["go", "vet", "./..."], ROOT / "server", "Go Vet"),
         (["go", "test", "./..."], ROOT / "server", "Go Tests"),
-        (["go", "test", "-race", "./pkg/persistence", "./pkg/registry", "./pkg/origin", "./pkg/relay"], ROOT / "server", "Go Race Checks"),
+        (["go", "test", "-race", "./pkg/persistence", "./pkg/registry", "./pkg/origin", "./pkg/relay", "./pkg/gateway"], ROOT / "server", "Go Race Checks"),
         ([sys.executable, "scripts/run_mutation_tests.py"], ROOT, "Automated Mutation Testing Gate"),
     ]
     if executable("cargo-deny"):

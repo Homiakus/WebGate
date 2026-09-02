@@ -166,7 +166,9 @@ pub fn transactional_bind_config(
     raw_body: &str,
 ) -> Result<ClientConfigProfile, ConfigError> {
     if raw_body.trim().is_empty() {
-        return Err(ConfigError::ValidationError("Request body is empty".to_string()));
+        return Err(ConfigError::ValidationError(
+            "Request body is empty".to_string(),
+        ));
     }
 
     let content = if let Some(content_val) = extract_json_string_field(raw_body, "content") {
@@ -181,9 +183,7 @@ pub fn transactional_bind_config(
 
     let new_profile = ClientConfigProfile::from_toml_str(&content)?;
 
-    let mut lock = profile_arc
-        .write()
-        .map_err(|_| ConfigError::LockPoisoned)?;
+    let mut lock = profile_arc.write().map_err(|_| ConfigError::LockPoisoned)?;
     *lock = new_profile.clone();
     Ok(new_profile)
 }
@@ -864,7 +864,11 @@ mod tests {
         client.read_to_string(&mut resp).unwrap();
         server_thread.join().unwrap();
 
-        assert!(resp.starts_with("HTTP/1.1 200 OK"), "Expected 200 OK but got: {}", resp);
+        assert!(
+            resp.starts_with("HTTP/1.1 200 OK"),
+            "Expected 200 OK but got: {}",
+            resp
+        );
         assert!(resp.contains("\"status\":\"ok\""));
         assert!(resp.contains("\"profile_id\":\"http-fleet\""));
 
@@ -903,7 +907,11 @@ mod tests {
         client.read_to_string(&mut resp).unwrap();
         server_thread.join().unwrap();
 
-        assert!(resp.starts_with("HTTP/1.1 400 Bad Request"), "Expected 400 Bad Request but got: {}", resp);
+        assert!(
+            resp.starts_with("HTTP/1.1 400 Bad Request"),
+            "Expected 400 Bad Request but got: {}",
+            resp
+        );
         assert!(resp.contains("\"status\":\"error\""));
 
         assert_eq!(profile_arc.read().unwrap().profile_id, "default-fleet");
