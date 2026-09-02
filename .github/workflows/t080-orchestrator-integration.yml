@@ -1,4 +1,5 @@
 name: t080-orchestrator-integration
+# retry: transition history now makes lifecycle states observable
 
 on:
   push:
