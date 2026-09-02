@@ -26,6 +26,7 @@ use webgate_transport::restricted_socks5::{
 use webgate_transport::{LocalProxyEndpoint, TransportProvider, TransportState};
 
 const CLIENT_UI_HTML: &str = include_str!("client_ui.html");
+const CLIENT_UI_TRUTH_PATCH_JS: &str = include_str!("client_ui_truth_patch.js");
 const PRIMARY_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn load_client_profile(config_path: Option<&str>) -> Result<ClientConfigProfile, ConfigError> {
@@ -89,23 +90,29 @@ fn profile_to_json(profile: &ClientConfigProfile) -> String {
     for d in &profile.destinations {
         dests.push(format!(
             r#"{{"id":"{}","name":"{}","url":"{}","category":"{}","description":"{}"}}"#,
-            d.id, d.name, d.url, d.category, d.description
+            escape_json(&d.id),
+            escape_json(&d.name),
+            escape_json(&d.url),
+            escape_json(&d.category),
+            escape_json(&d.description)
         ));
     }
     let fallback = match &profile.fallback_relay {
         Some(fb) => format!(
             r#"{{"name":"{}","address":"{}","port":{}}}"#,
-            fb.name, fb.address, fb.port
+            escape_json(&fb.name),
+            escape_json(&fb.address),
+            fb.port
         ),
         None => "null".to_string(),
     };
     format!(
         r#"{{"profile_id":"{}","profile_name":"{}","version":"{}","primary_relay":{{"name":"{}","address":"{}","port":{}}},"fallback_relay":{},"destinations":[{}]}}"#,
-        profile.profile_id,
-        profile.profile_name,
-        profile.version,
-        profile.primary_relay.name,
-        profile.primary_relay.address,
+        escape_json(&profile.profile_id),
+        escape_json(&profile.profile_name),
+        escape_json(&profile.version),
+        escape_json(&profile.primary_relay.name),
+        escape_json(&profile.primary_relay.address),
         profile.primary_relay.port,
         fallback,
         dests.join(",")
@@ -157,6 +164,31 @@ fn extract_json_string_field(json: &str, field_name: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn client_ui_document() -> String {
+    let patch = format!("<script>\n{}\n</script>\n</body>", CLIENT_UI_TRUTH_PATCH_JS);
+    CLIENT_UI_HTML.replacen("</body>", &patch, 1)
+}
+
+fn write_http_response(
+    stream: &mut TcpStream,
+    status: &str,
+    content_type: &str,
+    body: &str,
+) {
+    let response = format!(
+        "HTTP/1.1 {}\r\nContent-Type: {}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status,
+        content_type,
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(response.as_bytes());
+}
+
+fn write_json_response(stream: &mut TcpStream, status: &str, body: &str) {
+    write_http_response(stream, status, "application/json; charset=utf-8", body);
 }
 
 /// Atomically binds and validates runtime client configuration.
@@ -215,26 +247,20 @@ fn handle_client_stream(
     let path = parts[1];
 
     if method == "GET" && (path == "/" || path == "/index.html") {
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            CLIENT_UI_HTML.len(),
-            CLIENT_UI_HTML
-        );
-        let _ = stream.write_all(response.as_bytes());
+        let body = client_ui_document();
+        write_http_response(&mut stream, "200 OK", "text/html; charset=utf-8", &body);
         return;
     }
 
     if method == "GET" && path == "/api/profile" {
-        let json_body = match profile_arc.read() {
-            Ok(p) => profile_to_json(&p),
-            Err(_) => "{}".to_string(),
-        };
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            json_body.len(),
-            json_body
-        );
-        let _ = stream.write_all(response.as_bytes());
+        match profile_arc.read() {
+            Ok(profile) => write_json_response(&mut stream, "200 OK", &profile_to_json(&profile)),
+            Err(_) => write_json_response(
+                &mut stream,
+                "500 Internal Server Error",
+                r#"{"status":"error","message":"profile state unavailable"}"#,
+            ),
+        }
         return;
     }
 
@@ -242,16 +268,11 @@ fn handle_client_stream(
         let json_body = format!(
             r#"{{"status":"{}","device_id":"{}","platform":"{:?}","protected_proxy":{}}}"#,
             transport_state_label(transport_state),
-            keystore_id,
+            escape_json(keystore_id),
             current_platform(),
             proxy_json(protected_proxy)
         );
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            json_body.len(),
-            json_body
-        );
-        let _ = stream.write_all(response.as_bytes());
+        write_json_response(&mut stream, "200 OK", &json_body);
         return;
     }
 
@@ -269,46 +290,43 @@ fn handle_client_stream(
                     escape_json(&new_profile.profile_name),
                     escape_json(&new_profile.version)
                 );
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    json_body.len(),
-                    json_body
-                );
-                let _ = stream.write_all(response.as_bytes());
+                write_json_response(&mut stream, "200 OK", &json_body);
             }
             Err(err) => {
                 let status_code = match err {
                     ConfigError::LockPoisoned => "500 Internal Server Error",
                     _ => "400 Bad Request",
                 };
-                let err_msg = escape_json(&err.to_string());
-                let json_body = format!(r#"{{"status":"error","message":"{}"}}"#, err_msg);
-                let response = format!(
-                    "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    status_code,
-                    json_body.len(),
-                    json_body
+                let json_body = format!(
+                    r#"{{"status":"error","message":"{}"}}"#,
+                    escape_json(&err.to_string())
                 );
-                let _ = stream.write_all(response.as_bytes());
+                write_json_response(&mut stream, status_code, &json_body);
             }
         }
         return;
     }
 
     if method == "POST" && path == "/api/navigate" {
-        let mut target_url = "webgate://service/docs/overview".to_string();
-        if let Some(body_start) = req_str.find("\r\n\r\n") {
-            let body = &req_str[body_start + 4..];
-            if let Some(t_start) = body.find("\"target_url\":") {
-                let url_sub = &body[t_start + 13..];
-                if let (Some(first_quote), Some(second_quote)) = (
-                    url_sub.find('"'),
-                    url_sub.find('"').and_then(|q| url_sub[q + 1..].find('"')),
-                ) {
-                    target_url =
-                        url_sub[first_quote + 1..first_quote + 1 + second_quote].to_string();
-                }
-            }
+        let body = match req_str.find("\r\n\r\n") {
+            Some(idx) => &req_str[idx + 4..],
+            None => "",
+        };
+        let Some(target_url) = extract_json_string_field(body, "target_url") else {
+            write_json_response(
+                &mut stream,
+                "400 Bad Request",
+                r#"{"ok":false,"state":"invalid_request","message":"target_url is required"}"#,
+            );
+            return;
+        };
+        if target_url.trim().is_empty() {
+            write_json_response(
+                &mut stream,
+                "400 Bad Request",
+                r#"{"ok":false,"state":"invalid_request","message":"target_url is empty"}"#,
+            );
+            return;
         }
 
         let gate = BrokerSecurityGate::new(
@@ -326,29 +344,43 @@ fn handle_client_stream(
             },
         };
 
+        if let Err(error) = gate.verify_request(&nav_req) {
+            let json_body = format!(
+                r#"{{"ok":false,"state":"denied","message":"{}","target":"{}","transport_status":"{}","protected_proxy":{}}}"#,
+                escape_json(&format!("navigation policy denied: {error:?}")),
+                escape_json(&target_url),
+                transport_state_label(transport_state),
+                proxy_json(protected_proxy)
+            );
+            write_json_response(&mut stream, "403 Forbidden", &json_body);
+            return;
+        }
+
         let transport_usable = matches!(
             transport_state,
             TransportState::Ready | TransportState::Degraded
         ) && protected_proxy.is_some();
-        let is_ok = gate.verify_request(&nav_req).is_ok() && transport_usable;
+        if !transport_usable {
+            let json_body = format!(
+                r#"{{"ok":false,"state":"offline","message":"protected transport is not ready","target":"{}","transport_status":"{}","protected_proxy":null}}"#,
+                escape_json(&target_url),
+                transport_state_label(transport_state)
+            );
+            write_json_response(&mut stream, "503 Service Unavailable", &json_body);
+            return;
+        }
+
         let json_body = format!(
-            r#"{{"ok":{},"target":"{}","transport_status":"{}","protected_proxy":{}}}"#,
-            is_ok,
-            target_url,
+            r#"{{"ok":true,"state":"transport_ready","message":"protected transport and policy are ready; browser session is not yet opened","target":"{}","transport_status":"{}","protected_proxy":{}}}"#,
+            escape_json(&target_url),
             transport_state_label(transport_state),
             proxy_json(protected_proxy)
         );
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            json_body.len(),
-            json_body
-        );
-        let _ = stream.write_all(response.as_bytes());
+        write_json_response(&mut stream, "200 OK", &json_body);
         return;
     }
 
-    let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-    let _ = stream.write_all(response.as_bytes());
+    write_http_response(&mut stream, "404 Not Found", "text/plain; charset=utf-8", "");
 }
 
 fn launch_app_window(url: &str) {
@@ -442,33 +474,19 @@ fn main() {
                 destination_opt = Some(args[i + 1].clone());
                 i += 1;
             }
-            "--list" | "-l" => {
-                list_only = true;
-            }
-            "--cli" | "--terminal" => {
-                cli_only = true;
-            }
+            "--list" | "-l" => list_only = true,
+            "--cli" | "--terminal" => cli_only = true,
             "--help" | "-h" => {
-                println!(
-                    "WebGate Клиент — Защищенный браузерный клиент доступа к приватным ресурсам"
-                );
+                println!("WebGate Клиент — Защищенный браузерный клиент доступа к приватным ресурсам");
                 println!();
                 println!("ИСПОЛЬЗОВАНИЕ:");
                 println!("    webgate-app [ПАРАМЕТРЫ]");
                 println!();
                 println!("ПАРАМЕТРЫ:");
-                println!(
-                    "    -c, --config <ПУТЬ>         Привязать файл конфигурационного профиля (.toml/.json)"
-                );
-                println!(
-                    "    -d, --destination <URL|ID>  Выбрать целевой сервис или URL для перехода"
-                );
-                println!(
-                    "    -l, --list                  Показать список доступных сервисов в профиле и выйти"
-                );
-                println!(
-                    "        --cli                   Запуск только в терминальном режиме без открытия окна GUI"
-                );
+                println!("    -c, --config <ПУТЬ>         Привязать файл конфигурационного профиля (.toml/.json)");
+                println!("    -d, --destination <URL|ID>  Выбрать целевой сервис или URL для перехода");
+                println!("    -l, --list                  Показать список доступных сервисов в профиле и выйти");
+                println!("        --cli                   Запуск только в терминальном режиме без открытия окна GUI");
                 println!("    -h, --help                  Показать справочную информацию");
                 return;
             }
@@ -477,8 +495,6 @@ fn main() {
         i += 1;
     }
 
-    // An explicitly requested configuration is authoritative input. If it cannot
-    // be read or validated, fail closed instead of silently changing to defaults.
     let profile = match load_client_profile(config_path_opt.as_deref()) {
         Ok(profile) => profile,
         Err(error) => {
@@ -501,24 +517,14 @@ fn main() {
     };
 
     if list_only {
-        println!(
-            "Настроенные сервисы и маршруты в профиле '{}':",
-            profile.profile_name
-        );
+        println!("Настроенные сервисы и маршруты в профиле '{}':", profile.profile_name);
         for (idx, dest) in profile.destinations.iter().enumerate() {
-            println!(
-                " {:02}. [{}] {} → {}",
-                idx + 1,
-                dest.id,
-                dest.name,
-                dest.url
-            );
+            println!(" {:02}. [{}] {} → {}", idx + 1, dest.id, dest.name, dest.url);
             println!("     {}", dest.description);
         }
         return;
     }
 
-    // T-040: Production platform key storage with persistence on disk.
     let key_path = std::env::var("WEBGATE_DEVICE_KEY_PATH")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
@@ -531,9 +537,7 @@ fn main() {
     let keystore = match PersistentFileDeviceKeyStore::open(&key_path) {
         Ok(mut ks) => {
             if ks.get_device_identity().ok().flatten().is_none()
-                && ks
-                    .generate_key(profile.key_algorithm, &profile.device_label)
-                    .is_err()
+                && ks.generate_key(profile.key_algorithm, &profile.device_label).is_err()
             {
                 eprintln!("[Хранилище ключей] Ошибка генерации ключа устройства");
                 return;
@@ -553,18 +557,13 @@ fn main() {
         }
     };
 
-    // T-042: Real dual-transport / dual-relay failover path.
-    // When a fallback relay is configured, initialize DualRelayFailoverTransport with
-    // dynamic active/standby relay failover and loopback proxy containment.
     let (transport_state, proxy_ep) = if let Some(ref fallback) = profile.fallback_relay {
         match build_dual_relay_transport(&profile, fallback) {
             Ok(mut dual_transport) => {
                 let ep = dual_transport.start_proxy().ok();
                 let state = dual_transport.state();
                 if ep.is_none() {
-                    eprintln!(
-                        "[Транспорт] Dual-relay upstreams не подтверждены; protected proxy остаётся OFFLINE."
-                    );
+                    eprintln!("[Транспорт] Dual-relay upstreams не подтверждены; protected proxy остаётся OFFLINE.");
                 }
                 (state, ep)
             }
@@ -579,9 +578,7 @@ fn main() {
                 let ep = primary.start_proxy().ok();
                 let state = primary.state();
                 if ep.is_none() {
-                    eprintln!(
-                        "[Транспорт] Primary sidecar не подтверждён; protected proxy остаётся OFFLINE."
-                    );
+                    eprintln!("[Транспорт] Primary sidecar не подтверждён; protected proxy остаётся OFFLINE.");
                 }
                 (state, ep)
             }
@@ -620,14 +617,10 @@ fn main() {
                 let navigated = capsule.navigate(&target_destination).is_ok();
                 if proxy_attached && capsule_started && navigated {
                     println!("  [Капсула] Соединение установлено: {target_destination}");
-                    println!(
-                        "  [Капсула] Граница изоляции активна. Сетевые маршруты ОС не затронуты."
-                    );
+                    println!("  [Капсула] Граница изоляции активна. Сетевые маршруты ОС не затронуты.");
                 }
             } else {
-                println!(
-                    "  [Транспорт] OFFLINE: реальный защищённый proxy/tunnel не подтверждён; навигация запрещена."
-                );
+                println!("  [Транспорт] OFFLINE: реальный защищённый proxy/tunnel не подтверждён; навигация запрещена.");
             }
         }
         println!(
@@ -639,8 +632,6 @@ fn main() {
         return;
     }
 
-    // Default user launch is a local control UI only. It is not the protected
-    // browser runtime and cannot claim protected connectivity while transport is Offline.
     let listener = match TcpListener::bind("127.0.0.1:43110") {
         Ok(l) => l,
         Err(_) => match TcpListener::bind("127.0.0.1:0") {
@@ -678,7 +669,6 @@ fn main() {
     });
 
     launch_app_window(&ui_url);
-
     let _ = server_handle.join();
 }
 
@@ -686,6 +676,37 @@ fn main() {
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    fn http_roundtrip(
+        request: &str,
+        transport_state: TransportState,
+        proxy: Option<LocalProxyEndpoint>,
+    ) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let profile_arc = Arc::new(RwLock::new(ClientConfigProfile::default()));
+        let profile_clone = Arc::clone(&profile_arc);
+        let request = request.to_string();
+
+        let server_thread = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            handle_client_stream(
+                stream,
+                &profile_clone,
+                "dev_test_123",
+                transport_state,
+                proxy,
+            );
+        });
+
+        let mut client = TcpStream::connect(addr).unwrap();
+        client.write_all(request.as_bytes()).unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        server_thread.join().unwrap();
+        response
+    }
 
     #[test]
     fn default_profile_is_used_only_when_no_config_was_requested() {
@@ -701,7 +722,6 @@ mod tests {
             "t035"
         ));
         let _ = std::fs::remove_file(&missing);
-
         let result = load_client_profile(missing.to_str());
         assert!(matches!(result, Err(ConfigError::FileNotFound(_))));
     }
@@ -715,10 +735,7 @@ mod tests {
             port: 4443,
         };
         let result = build_dual_relay_transport(&profile, &fallback);
-        assert!(matches!(
-            result,
-            Err(DualRelayError::FallbackUpstreamNotLoopback)
-        ));
+        assert!(matches!(result, Err(DualRelayError::FallbackUpstreamNotLoopback)));
     }
 
     #[test]
@@ -751,12 +768,58 @@ mod tests {
     }
 
     #[test]
+    fn rendered_client_ui_includes_truth_controller() {
+        let document = client_ui_document();
+        assert!(document.contains("WEBGATE_TRUTH_PATCH_ACTIVE"));
+        assert!(document.contains("ДЕМО-ДАННЫЕ НЕ ИСПОЛЬЗУЮТСЯ"));
+    }
+
+    #[test]
+    fn navigate_offline_returns_503_and_never_success() {
+        let body = r#"{"target_url":"webgate://service/docs/overview"}"#;
+        let request = format!(
+            "POST /api/navigate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(), body
+        );
+        let response = http_roundtrip(&request, TransportState::Offline, None);
+        assert!(response.starts_with("HTTP/1.1 503 Service Unavailable"));
+        assert!(response.contains("\"ok\":false"));
+        assert!(response.contains("\"state\":\"offline\""));
+        assert!(!response.contains("\"ok\":true"));
+    }
+
+    #[test]
+    fn navigate_requires_target_url() {
+        let body = r#"{}"#;
+        let request = format!(
+            "POST /api/navigate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(), body
+        );
+        let response = http_roundtrip(&request, TransportState::Ready, None);
+        assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
+        assert!(response.contains("\"state\":\"invalid_request\""));
+    }
+
+    #[test]
+    fn navigate_ready_reports_transport_ready_not_open_session() {
+        let proxy = LocalProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 43117).unwrap();
+        let body = r#"{"target_url":"webgate://service/docs/overview"}"#;
+        let request = format!(
+            "POST /api/navigate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(), body
+        );
+        let response = http_roundtrip(&request, TransportState::Ready, Some(proxy));
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains("\"ok\":true"));
+        assert!(response.contains("\"state\":\"transport_ready\""));
+        assert!(response.contains("browser session is not yet opened"));
+    }
+
+    #[test]
     fn transactional_bind_config_updates_profile_on_valid_payload() {
         let initial = ClientConfigProfile::default();
         let profile_arc = Arc::new(RwLock::new(initial));
-
         let payload = r#"{"content": "profile_id = \"custom-fleet\"\nprofile_name = \"Custom Fleet Mesh\"\nprimary_relay_addr = \"127.0.0.1\"\nprimary_relay_port = 52000\nallowed_domains = \"service, internal.mesh\"\ndestination = \"node1|Node One|webgate://service/node1|Infra|Node Telemetry\"\n"}"#;
-
         let res = transactional_bind_config(&profile_arc, payload);
         assert!(res.is_ok(), "Expected Ok but got {:?}", res);
         let updated = res.unwrap();
@@ -765,9 +828,7 @@ mod tests {
         assert_eq!(updated.primary_relay.port, 52000);
         assert_eq!(updated.allowed_domains, vec!["service", "internal.mesh"]);
         assert_eq!(updated.destinations.len(), 1);
-
-        let in_lock = profile_arc.read().unwrap();
-        assert_eq!(in_lock.profile_id, "custom-fleet");
+        assert_eq!(profile_arc.read().unwrap().profile_id, "custom-fleet");
     }
 
     #[test]
@@ -775,15 +836,10 @@ mod tests {
         let initial = ClientConfigProfile::default();
         let original_id = initial.profile_id.clone();
         let profile_arc = Arc::new(RwLock::new(initial));
-
         let payload = r#"{"content": "not a valid key value pair without equals"}"#;
-
         let res = transactional_bind_config(&profile_arc, payload);
         assert!(res.is_err());
-
-        // Invariant: active profile must remain strictly unchanged
-        let in_lock = profile_arc.read().unwrap();
-        assert_eq!(in_lock.profile_id, original_id);
+        assert_eq!(profile_arc.read().unwrap().profile_id, original_id);
     }
 
     #[test]
@@ -791,15 +847,10 @@ mod tests {
         let initial = ClientConfigProfile::default();
         let original_id = initial.profile_id.clone();
         let profile_arc = Arc::new(RwLock::new(initial));
-
-        // Validation failure: primary relay port is 0
         let payload = r#"{"content": "profile_id = \"valid-id\"\nprimary_relay_addr = \"127.0.0.1\"\nprimary_relay_port = 0\ndestination = \"d1|D1|webgate://service/d1|Cat|Desc\"\n"}"#;
-
         let res = transactional_bind_config(&profile_arc, payload);
         assert!(res.is_err());
-
-        let in_lock = profile_arc.read().unwrap();
-        assert_eq!(in_lock.profile_id, original_id);
+        assert_eq!(profile_arc.read().unwrap().profile_id, original_id);
     }
 
     #[test]
@@ -807,14 +858,10 @@ mod tests {
         let initial = ClientConfigProfile::default();
         let original_id = initial.profile_id.clone();
         let profile_arc = Arc::new(RwLock::new(initial));
-
         let payload = r#"{"content": "profile_id = \"valid-id\"\nprimary_relay_addr = \"127.0.0.1\"\nprimary_relay_port = 43111\ndestination = \"d1|D1|file:///etc/passwd|Cat|Desc\"\n"}"#;
-
         let res = transactional_bind_config(&profile_arc, payload);
         assert!(res.is_err());
-
-        let in_lock = profile_arc.read().unwrap();
-        assert_eq!(in_lock.profile_id, original_id);
+        assert_eq!(profile_arc.read().unwrap().profile_id, original_id);
     }
 
     #[test]
@@ -822,56 +869,37 @@ mod tests {
         let initial = ClientConfigProfile::default();
         let original_id = initial.profile_id.clone();
         let profile_arc = Arc::new(RwLock::new(initial));
-
         let payload = r#"{"content": "unclosed string without end"#;
-
         let res = transactional_bind_config(&profile_arc, payload);
         assert!(res.is_err());
-
-        let in_lock = profile_arc.read().unwrap();
-        assert_eq!(in_lock.profile_id, original_id);
+        assert_eq!(profile_arc.read().unwrap().profile_id, original_id);
     }
 
     #[test]
     fn handle_client_stream_bind_config_http_transactional_roundtrip() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-
         let profile_arc = Arc::new(RwLock::new(ClientConfigProfile::default()));
         let profile_clone = Arc::clone(&profile_arc);
 
         let server_thread = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            handle_client_stream(
-                stream,
-                &profile_clone,
-                "dev_test_123",
-                TransportState::Ready,
-                None,
-            );
+            handle_client_stream(stream, &profile_clone, "dev_test_123", TransportState::Ready, None);
         });
 
         let mut client = TcpStream::connect(addr).unwrap();
         let valid_body = r#"{"content":"profile_id = \"http-fleet\"\nprofile_name = \"HTTP Fleet\"\nprimary_relay_addr = \"127.0.0.1\"\nprimary_relay_port = 48000\ndestination = \"srv|Srv|webgate://service/s|Cat|Desc\"\n"}"#;
         let req = format!(
             "POST /api/bind_config HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            valid_body.len(),
-            valid_body
+            valid_body.len(), valid_body
         );
         client.write_all(req.as_bytes()).unwrap();
-
         let mut resp = String::new();
         client.read_to_string(&mut resp).unwrap();
         server_thread.join().unwrap();
-
-        assert!(
-            resp.starts_with("HTTP/1.1 200 OK"),
-            "Expected 200 OK but got: {}",
-            resp
-        );
+        assert!(resp.starts_with("HTTP/1.1 200 OK"));
         assert!(resp.contains("\"status\":\"ok\""));
         assert!(resp.contains("\"profile_id\":\"http-fleet\""));
-
         assert_eq!(profile_arc.read().unwrap().profile_id, "http-fleet");
     }
 
@@ -879,41 +907,26 @@ mod tests {
     fn handle_client_stream_bind_config_http_bad_request_fails_closed() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-
         let profile_arc = Arc::new(RwLock::new(ClientConfigProfile::default()));
         let profile_clone = Arc::clone(&profile_arc);
 
         let server_thread = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            handle_client_stream(
-                stream,
-                &profile_clone,
-                "dev_test_123",
-                TransportState::Ready,
-                None,
-            );
+            handle_client_stream(stream, &profile_clone, "dev_test_123", TransportState::Ready, None);
         });
 
         let mut client = TcpStream::connect(addr).unwrap();
         let invalid_body = r#"{"content":"primary_relay_port = not_a_number\n"}"#;
         let req = format!(
             "POST /api/bind_config HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            invalid_body.len(),
-            invalid_body
+            invalid_body.len(), invalid_body
         );
         client.write_all(req.as_bytes()).unwrap();
-
         let mut resp = String::new();
         client.read_to_string(&mut resp).unwrap();
         server_thread.join().unwrap();
-
-        assert!(
-            resp.starts_with("HTTP/1.1 400 Bad Request"),
-            "Expected 400 Bad Request but got: {}",
-            resp
-        );
+        assert!(resp.starts_with("HTTP/1.1 400 Bad Request"));
         assert!(resp.contains("\"status\":\"error\""));
-
         assert_eq!(profile_arc.read().unwrap().profile_id, "default-fleet");
     }
 }
