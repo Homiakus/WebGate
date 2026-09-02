@@ -74,6 +74,7 @@ Material unexpected evidence becomes an `F-XXX` finding before task scope/order 
 - **T-042:** High-availability dual-relay failover transport (`DualRelayFailoverTransport`) managing independent Relay A and Relay B upstreams, live health observation, immediate relay failover on primary crash, cooldown-aware standby probe and switchback, and seamless BrowserCapsule integration.
 - **T-048:** Transactional fail-closed runtime client configuration binding (`transactional_bind_config`) preventing false success reporting, validating scheme/port/destinations/domains/syntax fail-closed, leaving runtime state unchanged on errors, and returning HTTP 400 with explicit structured error details.
 - **T-044:** Automated trustworthy security feedback loop including full `go test -race` concurrency validation, pinned multi-stack mutation testing engine (`scripts/run_mutation_tests.py` with 8/8 security/durability mutants killed fail-closed), and native Go fuzzing matrix for Relay framing and persistence deserialization.
+- **T-045:** Real end-to-end multi-hop qualification suite spanning the full WebGate path (client / browser capsule → transport proxy → transit relays A/B → persistent reverse origin agent → data gateway → local protected service), with positive payload integrity, failover resilience, destination policy fail-closed, and authorization enforcement.
 
 ## Still not production-qualified
 
@@ -81,7 +82,7 @@ Material unexpected evidence becomes an `F-XXX` finding before task scope/order 
 - SecureAcces-owned durable state + recovery qualification.
 - SecureAcces-backed administrator management authorization.
 - Atomic legacy privileged action + audit transaction across all Admin routes; T-051 owns this convergence.
-- Real end-to-end/chaos/release qualification.
+- Real release/distribution requalification (T-046) and final re-audit/convergence (T-047).
 
 ---
 
@@ -131,7 +132,7 @@ Historical F-001..F-028 remain in Git history.
 - **F-031 — No real Servo/proxied runtime:** RESOLVED by T-041.
 - **F-032 — Synthetic production keystore:** RESOLVED by T-040.
 - **F-033 — Real SecureAcces production authority absent:** OPEN / Critical → T-052. Public bridge is qualified; private provider is not yet qualified/promoted.
-- **F-034 — Origin reverse connectivity absent:** OPEN / Critical → T-037.
+- **F-034 — Origin reverse connectivity absent:** RESOLVED by T-037 / T-045.
 - **F-035 — Security/operations state ephemeral:** PARTIALLY RESOLVED / High. WebGate-owned state is now qualified by T-039; SecureAcces-owned durability remains T-052.
 - **F-036 — Admin auth is interim shared token:** OPEN/CONTAINED / High → T-051.
 - **F-037 — Explicit config failed open:** RESOLVED by T-035.
@@ -152,7 +153,24 @@ Status vocabulary: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS
 
 ## DONE foundations
 
-T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037, T-040, T-041, T-042, T-048 and **T-044** are DONE under their recorded scopes.
+T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037, T-040, T-041, T-042, T-048, T-044 and **T-045** are DONE under their recorded scopes.
+
+### T-045 — Real end-to-end qualification
+**Status:** DONE · **Priority:** P0
+
+Evidence chain:
+- Multi-hop Go integration qualification suite in `server/pkg/gateway/e2e_qualification_test.go` (`TestRealEndToEndQualification` PASS under `go test -race`).
+- End-to-end network path validated: Client TCP connection → Relay Server (A/B) → Persistent authenticated Origin Reverse Agent → WebGate ServerGateway on loopback → Local protected HTTP backend service and back.
+- Full positive request verification: authorized GET and POST requests with custom payloads and session headers traverse the entire tunnel without session leaks or header corruption (`I-001`, `I-007`, `I-012`).
+- Strict authorization & fail-closed enforcement: missing session header returns HTTP 401, unauthorized/revoked device returns HTTP 403, non-existent service slug returns HTTP 404, and disabled service returns HTTP 503 (`I-003`, `I-008`, `I-009`).
+- Concurrent multi-client stream multiplexing over reverse tunnel: 15 concurrent clients simultaneously transmitting data without crosstalk or frame corruption (`I-021`).
+- Full-stack Rust integration qualification suite in `crates/webgate-app/tests/e2e_full_stack.rs` (`test_real_end_to_end_full_stack_qualification` PASS) exercising `BrowserCapsule`, `DualRelayFailoverTransport`, Ed25519 `PersistentFileDeviceKeyStore`, live Relay A crash failover to Relay B, and destination policy fail-closed rejection.
+- Cross-stack test verification in `scripts/tests/test_e2e_qualification.py` (4/4 PASS) integrated into CI-parity verification matrix (`scripts/project_manager.py verify`).
+
+Qualified contract:
+- The complete multi-hop WebGate pipeline operates seamlessly end-to-end across independent relays and CGNAT-isolated Origin agents (`I-001`, `I-006`, `I-012`, `I-013`, `I-014`).
+- Unauthenticated or unauthorized traffic is rejected fail-closed before reaching upstream protected services (`I-003`, `I-007`).
+- Live relay outage automatically triggers transport failover without client disruption or security boundary compromise.
 
 ### T-044 — Trustworthy security feedback loop
 **Status:** DONE · **Priority:** P1
@@ -316,9 +334,6 @@ Public bridge is qualified in WebGate. Private RED `c0a0f82c...` and candidate `
 
 Replace shared-token-only management with request-scoped SecureAcces principal/actor authorization. Shared token may remain only as explicitly scoped bootstrap/recovery factor. Converge privileged action + durable audit into a fail-closed management transaction where feasible.
 
-### T-045 — Real end-to-end qualification
-**Status:** TODO · **Priority:** P0 before release
-
 ### T-046 — Requalify release/distribution
 **Status:** TODO · **Priority:** P1 before release
 
@@ -338,17 +353,16 @@ Historical T-004/T-005/T-008/T-010/T-011/T-012/T-013/T-014/T-015/T-016/T-019/T-0
 
 ```text
 T-049 DONE → T-050 DONE → T-052(private) → T-051 → T-038 convergence ───────────────┐
-T-039 DONE ──────────────────────────────────────────────────────────────────────────┼→ T-045
+T-039 DONE ──────────────────────────────────────────────────────────────────────────┼→ T-045 DONE → T-046 → T-047
 T-035 DONE → T-036 DONE → T-037 DONE → T-040 DONE → T-041 DONE → T-042 DONE ─────────┤
 T-048 DONE ──────────────────────────────────────────────────────────────────────────┤
 T-044 DONE ──────────────────────────────────────────────────────────────────────────┘
-T-045 → T-046 → T-047.
 ```
 
 Priority now:
 1. check private SecureAcces executable CI once;
 2. if available: finish T-052 → T-051;
-3. T-045 (Real end-to-end qualification) → T-046 → T-047.
+3. T-046 (Requalify release/distribution) → T-047 (Final re-audit/convergence).
 
 ---
 
@@ -370,7 +384,7 @@ cargo deny check --all-features
 cd server && go mod tidy -diff
 cd server && go vet ./...
 cd server && go test ./...
-cd server && go test -race ./pkg/persistence ./pkg/registry ./pkg/origin ./pkg/relay
+cd server && go test -race ./pkg/persistence ./pkg/registry ./pkg/origin ./pkg/relay ./pkg/gateway
 cd server && CGO_ENABLED=0 go test ./pkg/persistence ./pkg/registry ./pkg/origin ./pkg/relay
 cd server && CGO_ENABLED=0 go build ./cmd/webgate-server ./cmd/webgate-relay
 ```
@@ -458,17 +472,26 @@ Green CI never overrules a stronger invariant. A workflow that never starts exec
 - **Iteration 21 / T-042:** High-availability dual-relay failover transport (`DualRelayFailoverTransport`) managing independent Primary (Relay A) and Fallback (Relay B) upstreams over unified loopback proxy, live health observation, immediate relay failover on primary crash, cooldown-aware standby probe and switchback, and seamless BrowserCapsule integration. Integration suites in `webgate-transport` and `webgate-browser` PASS (`ee7cd21`).
 - **Iteration 22 / T-048:** Transactional fail-closed runtime client configuration binding (`transactional_bind_config`) resolving F-039. Atomic parsing/validation/swap under `RwLock`, strict scheme/port/destinations/domains/syntax validation, fail-closed HTTP 400 with structured JSON error details on invalid payload, and full isolation of active runtime profile on any error (`46a2013`).
 - **Iteration 23 / T-044:** Trustworthy security feedback loop resolving F-038. Multi-package Go race detector validation (`go test -race ./pkg/...`), automated mutation testing framework (`scripts/run_mutation_tests.py`) with 8/8 security/durability mutants killed fail-closed, native Go fuzzing matrix in `pkg/relay` and `pkg/persistence`, and full quality gate integration in `scripts/project_manager.py` (`0e17abe`).
+- **Iteration 24 / T-045:** Real end-to-end multi-hop qualification suite resolving F-034. Validates full pipeline from Client / BrowserCapsule → Destination-restricted SOCKS5 Proxy → Dual Relay Failover (Relays A/B) → CGNAT-isolated Persistent Reverse Origin Agent → Loopback WebGate Data Gateway → Local Protected Backend Service. Multi-hop Go suite (`server/pkg/gateway/e2e_qualification_test.go`), full-stack Rust suite (`crates/webgate-app/tests/e2e_full_stack.rs`), and cross-stack Python test suite (`scripts/tests/test_e2e_qualification.py`) passing under `go test -race` and full CI quality gate (`75c8f34`).
 
 ---
 
 # 11. Context checkpoint
 
 ```text
-WEBGATE QUALIFIED MAIN: 0e17abe4f5e0fa0c13bb1eaeb7feeeebdaee59dc
+WEBGATE QUALIFIED MAIN: 75c8f349dd1cefc68007cf58b4ecf238c8c2010e
 SECUREACCES LAST KNOWN MAIN: 827abb1add11a9fcbd0a9944e65efbd20c675739
 
+T-045 DONE:
+- Multi-hop Go integration qualification suite in server/pkg/gateway/e2e_qualification_test.go under race detector
+- Full-stack Rust integration qualification suite in crates/webgate-app/tests/e2e_full_stack.rs
+- Real end-to-end multi-hop path: Client -> SOCKS5 Transport Proxy -> Dual Relays A/B -> Origin Reverse Agent -> Data Gateway -> Local Service
+- Positive GET/POST payload roundtrip integrity, authorization fail-closed, 401/403/404/503 enforcement
+- Live relay crash failover, destination policy containment, concurrent stream multiplexing without crosstalk
+- Cross-stack verification in scripts/tests/test_e2e_qualification.py integrated into CI-parity verification gate
+
 T-044 DONE:
-- Multi-package Go race detector validation (go test -race ./pkg/persistence ./pkg/registry ./pkg/origin ./pkg/relay) (I-021)
+- Multi-package Go race detector validation (go test -race ./pkg/persistence ./pkg/registry ./pkg/origin ./pkg/relay ./pkg/gateway) (I-021)
 - Automated mutation testing framework (scripts/run_mutation_tests.py) covering 8 critical security/durability invariants (I-022)
 - 8/8 mutants confirmed KILLED fail-closed across Go and Rust verification gates
 - Native Go fuzz testing suite in server/pkg/relay/fuzz_test.go and server/pkg/persistence/fuzz_test.go
@@ -537,10 +560,8 @@ legacy privileged mutation may commit before audit-sync failure;
 response fails closed, but action+audit are not one transaction → T-051.
 
 NEXT:
-1) one controlled SecureAcces private-CI recheck
-2) T-045 Real end-to-end qualification
-3) T-046 Requalify release/distribution
-4) T-047 Final re-audit/convergence
+1) T-046 Requalify release/distribution
+2) T-047 Final re-audit/convergence
 
 NO FORCE PUSH.
 ```
