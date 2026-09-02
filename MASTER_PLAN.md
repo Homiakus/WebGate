@@ -72,6 +72,8 @@ Material unexpected evidence becomes an `F-XXX` finding before task scope/order 
 - **T-040:** Safe pure-Rust RFC 8032 Ed25519 & FIPS 180-4 SHA-512 cryptographic engine, atomic disk-persisted `PersistentFileDeviceKeyStore` with memory zeroing, corruption fail-closed verification, and Proof-of-Possession signature contract compatible with Go server.
 - **T-041:** Real Servo embedding adapter and BrowserCapsule with strict fail-closed loopback proxy enforcement, subresource policy verification, lifecycle preservation, and document rendering qualification (SPA, CSR, SSR).
 - **T-042:** High-availability dual-relay failover transport (`DualRelayFailoverTransport`) managing independent Relay A and Relay B upstreams, live health observation, immediate relay failover on primary crash, cooldown-aware standby probe and switchback, and seamless BrowserCapsule integration.
+- **T-048:** Transactional fail-closed runtime client configuration binding (`transactional_bind_config`) preventing false success reporting, validating scheme/port/destinations/domains/syntax fail-closed, leaving runtime state unchanged on errors, and returning HTTP 400 with explicit structured error details.
+- **T-044:** Automated trustworthy security feedback loop including full `go test -race` concurrency validation, pinned multi-stack mutation testing engine (`scripts/run_mutation_tests.py` with 8/8 security/durability mutants killed fail-closed), and native Go fuzzing matrix for Relay framing and persistence deserialization.
 
 ## Still not production-qualified
 
@@ -133,7 +135,7 @@ Historical F-001..F-028 remain in Git history.
 - **F-035 — Security/operations state ephemeral:** PARTIALLY RESOLVED / High. WebGate-owned state is now qualified by T-039; SecureAcces-owned durability remains T-052.
 - **F-036 — Admin auth is interim shared token:** OPEN/CONTAINED / High → T-051.
 - **F-037 — Explicit config failed open:** RESOLVED by T-035.
-- **F-038 — Race/mutation/fuzz CI depth missing:** OPEN / High → T-044.
+- **F-038 — Race/mutation/fuzz CI depth missing:** RESOLVED by T-044.
 - **F-039 — Runtime client config can report false success:** RESOLVED by T-048.
 - **F-040 — SecureAcces dependency/auth boundaries under-modeled:** PARTIALLY RESOLVED by T-049/T-050; T-052/T-051 remain.
 - **F-041 — Private/durable SecureAcces deployment channel absent:** OPEN / Critical → T-052; previous private Actions terminated before executable steps.
@@ -150,7 +152,22 @@ Status vocabulary: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS
 
 ## DONE foundations
 
-T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037, T-040, T-041, T-042 and **T-048** are DONE under their recorded scopes.
+T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037, T-040, T-041, T-042, T-048 and **T-044** are DONE under their recorded scopes.
+
+### T-044 — Trustworthy security feedback loop
+**Status:** DONE · **Priority:** P1
+
+Evidence chain:
+- Multi-package Go race detector validation (`go test -race ./pkg/persistence ./pkg/registry ./pkg/origin ./pkg/relay`) passing with zero data races (`I-021`).
+- Automated mutation testing framework (`scripts/run_mutation_tests.py`) covering 8 critical security and durability invariants (persist-before-memory, non-loopback rejection in Origin, unauthenticated relay rejection, client config fail-closed, keystore header validation, browser loopback proxy enforcement, dual-relay live failover, and restricted SOCKS5 loopback restriction).
+- 8/8 mutants confirmed KILLED fail-closed by targeted test gates (`I-022`).
+- Native Go fuzz testing suite in `server/pkg/relay/fuzz_test.go` and `server/pkg/persistence/fuzz_test.go` verifying binary frame decoding, durable config unmarshaling, and audit event deserialization without panics or memory corruption.
+- Full quality gate integration in `scripts/project_manager.py` (`verify`, `mutate`, `fuzz`) and unit tests in `scripts/tests/test_mutation_runner.py` (3/3 PASS).
+
+Qualified contract:
+- Concurrency-critical Go modules pass race detection on every verification pass.
+- Invariant-breaking mutations across core security/durability boundaries are automatically detected and killed by test gates.
+- Binary protocol and persistent state parsers are hardened against malformed input via continuous fuzzing.
 
 ### T-048 — Transactional fail-closed runtime client config binding
 **Status:** DONE · **Priority:** P1/HIGH
@@ -299,11 +316,6 @@ Public bridge is qualified in WebGate. Private RED `c0a0f82c...` and candidate `
 
 Replace shared-token-only management with request-scoped SecureAcces principal/actor authorization. Shared token may remain only as explicitly scoped bootstrap/recovery factor. Converge privileged action + durable audit into a fail-closed management transaction where feasible.
 
-### T-044 — Trustworthy security feedback loop
-**Status:** TODO · **Priority:** P1
-
-Add `go test -race`, pinned mutation tooling, fuzz/property gates and failure classification. Scoped manual mutants do not complete T-044.
-
 ### T-045 — Real end-to-end qualification
 **Status:** TODO · **Priority:** P0 before release
 
@@ -328,16 +340,15 @@ Historical T-004/T-005/T-008/T-010/T-011/T-012/T-013/T-014/T-015/T-016/T-019/T-0
 T-049 DONE → T-050 DONE → T-052(private) → T-051 → T-038 convergence ───────────────┐
 T-039 DONE ──────────────────────────────────────────────────────────────────────────┼→ T-045
 T-035 DONE → T-036 DONE → T-037 DONE → T-040 DONE → T-041 DONE → T-042 DONE ─────────┤
-T-048 DONE ──────────────────────────────────────────────────────────────────────────┘
-T-044 must land before T-045 final qualification.
+T-048 DONE ──────────────────────────────────────────────────────────────────────────┤
+T-044 DONE ──────────────────────────────────────────────────────────────────────────┘
 T-045 → T-046 → T-047.
 ```
 
 Priority now:
 1. check private SecureAcces executable CI once;
 2. if available: finish T-052 → T-051;
-3. T-044 (Trustworthy security feedback loop);
-4. T-045 → T-046 → T-047.
+3. T-045 (Real end-to-end qualification) → T-046 → T-047.
 
 ---
 
@@ -348,6 +359,7 @@ Baseline:
 ```text
 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 python3 scripts/project_manager.py verify --dry-run
+python3 scripts/run_mutation_tests.py
 python3 scripts/check_architecture.py
 cargo metadata --locked --no-deps --format-version 1
 cargo fmt --all -- --check
@@ -358,6 +370,7 @@ cargo deny check --all-features
 cd server && go mod tidy -diff
 cd server && go vet ./...
 cd server && go test ./...
+cd server && go test -race ./pkg/persistence ./pkg/registry ./pkg/origin ./pkg/relay
 cd server && CGO_ENABLED=0 go test ./pkg/persistence ./pkg/registry ./pkg/origin ./pkg/relay
 cd server && CGO_ENABLED=0 go build ./cmd/webgate-server ./cmd/webgate-relay
 ```
@@ -443,15 +456,23 @@ Green CI never overrules a stronger invariant. A workflow that never starts exec
 - **Iteration 19 / T-040:** Safe pure-Rust RFC 8032 Ed25519 and FIPS 180-4 SHA-512 engine with `#![forbid(unsafe_code)]` and `PersistentFileDeviceKeyStore` with atomic file write, memory zeroing, corruption fail-closed verification, and Proof-of-Possession contract compatibility with Go server. Test vectors and integration tests PASS (`3f8fa7e`).
 - **Iteration 20 / T-041:** Real Servo embedding adapter and BrowserCapsule with strict fail-closed loopback proxy enforcement, subresource policy verification, lifecycle preservation, and document rendering qualification (SPA, CSR, SSR). (`28fb8d5`).
 - **Iteration 21 / T-042:** High-availability dual-relay failover transport (`DualRelayFailoverTransport`) managing independent Primary (Relay A) and Fallback (Relay B) upstreams over unified loopback proxy, live health observation, immediate relay failover on primary crash, cooldown-aware standby probe and switchback, and seamless BrowserCapsule integration. Integration suites in `webgate-transport` and `webgate-browser` PASS (`ee7cd21`).
-- **Iteration 22 / T-048:** Transactional fail-closed runtime client configuration binding (`transactional_bind_config`) resolving F-039. Atomic parsing/validation/swap under `RwLock`, strict scheme/port/destinations/domains/syntax validation, fail-closed HTTP 400 with structured JSON error details on invalid payload, and full isolation of active runtime profile on any error (`f8a3683`).
+- **Iteration 22 / T-048:** Transactional fail-closed runtime client configuration binding (`transactional_bind_config`) resolving F-039. Atomic parsing/validation/swap under `RwLock`, strict scheme/port/destinations/domains/syntax validation, fail-closed HTTP 400 with structured JSON error details on invalid payload, and full isolation of active runtime profile on any error (`46a2013`).
+- **Iteration 23 / T-044:** Trustworthy security feedback loop resolving F-038. Multi-package Go race detector validation (`go test -race ./pkg/...`), automated mutation testing framework (`scripts/run_mutation_tests.py`) with 8/8 security/durability mutants killed fail-closed, native Go fuzzing matrix in `pkg/relay` and `pkg/persistence`, and full quality gate integration in `scripts/project_manager.py` (`0e17abe`).
 
 ---
 
 # 11. Context checkpoint
 
 ```text
-WEBGATE QUALIFIED MAIN: f8a368383c2717f9172bc9776d639b56f8f553ef
+WEBGATE QUALIFIED MAIN: 0e17abe4f5e0fa0c13bb1eaeb7feeeebdaee59dc
 SECUREACCES LAST KNOWN MAIN: 827abb1add11a9fcbd0a9944e65efbd20c675739
+
+T-044 DONE:
+- Multi-package Go race detector validation (go test -race ./pkg/persistence ./pkg/registry ./pkg/origin ./pkg/relay) (I-021)
+- Automated mutation testing framework (scripts/run_mutation_tests.py) covering 8 critical security/durability invariants (I-022)
+- 8/8 mutants confirmed KILLED fail-closed across Go and Rust verification gates
+- Native Go fuzz testing suite in server/pkg/relay/fuzz_test.go and server/pkg/persistence/fuzz_test.go
+- Full quality gate integration in scripts/project_manager.py (verify, mutate, fuzz) and scripts/tests/test_mutation_runner.py (3/3 PASS)
 
 T-048 DONE:
 - Transactional fail-closed runtime client config binding (transactional_bind_config) in crates/webgate-app/src/main.rs
@@ -517,8 +538,9 @@ response fails closed, but action+audit are not one transaction → T-051.
 
 NEXT:
 1) one controlled SecureAcces private-CI recheck
-2) T-044 Trustworthy security feedback loop (go test -race, mutation, fuzz)
-3) T-045 Real end-to-end qualification
+2) T-045 Real end-to-end qualification
+3) T-046 Requalify release/distribution
+4) T-047 Final re-audit/convergence
 
 NO FORCE PUSH.
 ```
