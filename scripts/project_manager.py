@@ -544,6 +544,38 @@ def build_server(
     return code
 
 
+def build_relay(
+    *,
+    release: bool = False,
+    out_dir: Path | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Compiles the Go WebGate Transit Relay node."""
+    print(f"\n{Color.BOLD}[BUILD] Building WebGate Relay (Go Relay Node)...{Color.RESET}")
+    target_out = out_dir or (ROOT / "bin")
+    target_out.mkdir(parents=True, exist_ok=True)
+    dst_bin = target_out / f"webgate-relay{executable_ext()}"
+
+    commit = get_git_commit()
+    ldflags = f"-s -w -X main.Version=1.0.0 -X main.GitCommit={commit}" if release else f"-X main.GitCommit={commit}"
+
+    cmd = [
+        "go",
+        "build",
+        "-trimpath" if release else "-v",
+        "-ldflags",
+        ldflags,
+        "-o",
+        str(dst_bin),
+        "./cmd/webgate-relay",
+    ]
+
+    code = run(cmd, cwd=ROOT / "server", dry_run=dry_run, label="Go Relay Build")
+    if code == 0 and not dry_run and dst_bin.exists():
+        print(f"{Color.GREEN}[BUILT] Relay binary built at: {dst_bin}{Color.RESET}")
+    return code
+
+
 def build_android(
     *,
     arch: str = "aarch64",
@@ -590,6 +622,9 @@ def compile_target(
     if target_clean in {"server", "gw", "webgate-server"}:
         return build_server(release=release, out_dir=out_dir, dry_run=dry_run)
 
+    if target_clean in {"relay", "webgate-relay"}:
+        return build_relay(release=release, out_dir=out_dir, dry_run=dry_run)
+
     if target_clean in {"android"}:
         return build_android(release=release, dry_run=dry_run)
 
@@ -610,10 +645,15 @@ def compile_target(
         if code_server != 0:
             return code_server
 
+        # 3. Build Relay
+        code_relay = build_relay(release=release, out_dir=out_dir, dry_run=dry_run)
+        if code_relay != 0:
+            return code_relay
+
         print(f"\n{Color.GREEN}{Color.BOLD}[SUCCESS] ALL programs compiled into {out_dir or (ROOT / 'bin')}!{Color.RESET}")
         return 0
 
-    raise ValueError(f"Unknown compilation target '{target}'. Valid targets: all, client, server, android, workspace")
+    raise ValueError(f"Unknown compilation target '{target}'. Valid targets: all, client, server, relay, android, workspace")
 
 
 # ==============================================================================
@@ -885,7 +925,51 @@ def package_distribution(
         ]
         run(cmd, label="Sign Server Manifest")
 
-    print(f"\n{Color.GREEN}{Color.BOLD}[SUCCESS] Distribution package generated in {dist_dir}{Color.RESET}")
+    # Sign Relay Manifest
+    relay_bin = dist_dir / f"webgate-relay{executable_ext()}"
+    if relay_bin.exists():
+        manifest_relay = dist_dir / "manifest-relay.json"
+        cmd = [
+            sys.executable,
+            str(dist_script),
+            "sign",
+            "--version",
+            version,
+            "--channel",
+            channel,
+            "--source-commit",
+            commit,
+            "--platform",
+            plat,
+            "--arch",
+            arch,
+            "--artifact",
+            str(relay_bin),
+            "--signing-secret",
+            signing_secret,
+            "--output",
+            str(manifest_relay),
+        ]
+        run(cmd, label="Sign Relay Manifest")
+
+    # 3. Verify all generated manifests against artifacts
+    for manifest_name in ("manifest-client.json", "manifest-server.json", "manifest-relay.json"):
+        manifest_file = dist_dir / manifest_name
+        if manifest_file.exists():
+            cmd = [
+                sys.executable,
+                str(dist_script),
+                "verify",
+                "--manifest",
+                str(manifest_file),
+                "--artifact-dir",
+                str(dist_dir),
+                "--signing-secret",
+                signing_secret,
+            ]
+            run(cmd, label=f"Verify {manifest_name}")
+
+    print(f"\n{Color.GREEN}{Color.BOLD}[SUCCESS] Distribution package generated and verified in {dist_dir}{Color.RESET}")
     return 0
 
 

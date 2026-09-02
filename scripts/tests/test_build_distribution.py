@@ -126,6 +126,88 @@ class BuildDistributionTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("Signature verification failed", msg)
 
+    def test_creates_and_verifies_valid_signed_manifest_relay_and_server(self):
+        relay_art = self.dir_path / "webgate-relay.exe"
+        relay_art.write_bytes(b"webgate_relay_executable_bytes_2026")
+        server_art = self.dir_path / "webgate-server.exe"
+        server_art.write_bytes(b"webgate_server_gateway_bytes_2026")
+
+        secret = "corp_release_signing_secret"
+
+        # Relay manifest
+        manifest_relay = create_signed_manifest(
+            version="1.0.0",
+            channel="stable",
+            source_commit="commit123456",
+            platform="linux",
+            arch="x86_64",
+            artifact_path=relay_art,
+            signing_key_id="release-relay-key",
+            signing_secret=secret,
+        )
+        relay_manifest_file = self.dir_path / "manifest-relay.json"
+        relay_manifest_file.write_text(manifest_relay.to_json(), encoding="utf-8")
+        ok, msg = verify_manifest(relay_manifest_file, self.dir_path, signing_secret=secret)
+        self.assertTrue(ok, f"Relay verification failed: {msg}")
+
+        # Server manifest
+        manifest_server = create_signed_manifest(
+            version="1.0.0",
+            channel="stable",
+            source_commit="commit123456",
+            platform="linux",
+            arch="x86_64",
+            artifact_path=server_art,
+            signing_key_id="release-server-key",
+            signing_secret=secret,
+        )
+        server_manifest_file = self.dir_path / "manifest-server.json"
+        server_manifest_file.write_text(manifest_server.to_json(), encoding="utf-8")
+        ok, msg = verify_manifest(server_manifest_file, self.dir_path, signing_secret=secret)
+        self.assertTrue(ok, f"Server verification failed: {msg}")
+
+    def test_create_manifest_rejects_unsupported_platforms_and_channels(self):
+        art = self.dir_path / "dummy.bin"
+        art.write_bytes(b"dummy")
+
+        with self.assertRaises(ValueError):
+            create_signed_manifest(
+                version="1.0.0",
+                channel="stable",
+                source_commit="commit",
+                platform="solaris",
+                arch="x86_64",
+                artifact_path=art,
+                signing_key_id="k1",
+                signing_secret="s1",
+            )
+
+        with self.assertRaises(ValueError):
+            create_signed_manifest(
+                version="1.0.0",
+                channel="experimental-alpha",
+                source_commit="commit",
+                platform="windows",
+                arch="x86_64",
+                artifact_path=art,
+                signing_key_id="k1",
+                signing_secret="s1",
+            )
+
+    def test_create_manifest_rejects_nonexistent_artifact(self):
+        nonexistent = self.dir_path / "does_not_exist.exe"
+        with self.assertRaises(FileNotFoundError):
+            create_signed_manifest(
+                version="1.0.0",
+                channel="stable",
+                source_commit="commit",
+                platform="windows",
+                arch="x86_64",
+                artifact_path=nonexistent,
+                signing_key_id="k1",
+                signing_secret="s1",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
