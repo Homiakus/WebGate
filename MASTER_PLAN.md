@@ -1896,3 +1896,718 @@ A deployment may be called `Resilience Qualified` only when:
 - T-078 chaos/disaster matrix passes for all failures required by the selected class;
 - no tested resilience mechanism weakens I-001..I-044, P-I-001..P-I-008 or fail-closed behavior;
 - `Enterprise Qualified` additionally requires the commercial/product gates and T-069.
+
+---
+
+# 17. Human-centered UX, usability and complete journey execution layer
+
+This section is an additional layer of the same living plan, not a parallel roadmap. It translates the security, resilience and product architecture into observable human workflows. A technically secure capability is not product-qualified if the interface can misrepresent its state, if a user must understand internal transport concepts to complete a normal task, or if common administrator actions are easy to perform incorrectly.
+
+From this section onward, `Enterprise Qualified` under T-069 additionally depends on **T-087 Human Journey Qualification**. T-079 is an immediate P0 because current client UI behavior can display success independently of real protected navigation state.
+
+## 17.1 Human-centered invariants
+
+- **U-I-001 Truthful UI:** every success, readiness, connected, protected, delivered, registered, promoted or restored message must be backed by the owning backend/runtime state. The UI may never manufacture success after timeout, network error or ignored response fields.
+- **U-I-002 No silent demo/mock mode:** production builds never silently replace unavailable live data with realistic mock state. Demo/simulation modes are explicitly enabled and persistently labeled as non-production.
+- **U-I-003 Human fail-closed:** when WebGate blocks a path for security, the interface explains that protected access is unavailable and direct access remains blocked; it never implies the protected service opened successfully.
+- **U-I-004 Task language first:** ordinary users interact with organizations/workspaces, applications, access and devices. Relay, Origin, WGRL, BrokerCapability, raw key material, ports and config syntax are diagnostics/advanced concepts unless the task inherently requires them.
+- **U-I-005 Progressive disclosure:** end-user, administrator and advanced-infrastructure surfaces are distinct. Technical controls are not exposed merely because the backend supports them.
+- **U-I-006 One source of interaction truth:** frontend optimistic state cannot outrun committed backend state. High-value mutations use pending → confirmed/failed state and reconcile from the authoritative API after completion.
+- **U-I-007 Recoverable errors:** every known failure class exposes what happened, what it means, a safe next action and optional technical details/support evidence.
+- **U-I-008 Human identity lifecycle:** normal enrollment, invitation, revocation and offboarding are organized around a person/account and their devices/access, not manual copying of cryptographic identifiers.
+- **U-I-009 Safe destructive actions:** revoke, delete, stop, restore, promote, trust-root change and other high-blast-radius actions show scope/impact and require appropriately strong confirmation/authorization.
+- **U-I-010 Accessibility:** Tier-1 UI flows are keyboard/touch/screen-reader usable, have correct document language, semantic controls, visible focus, reduced-motion support and suitable target sizes/contrast.
+- **U-I-011 Mobile-first critical paths:** Tier-1 Android enrollment, app launch, resume/recreation, error recovery and device revocation are first-class flows rather than desktop UI squeezed into a mobile viewport.
+- **U-I-012 Observable privacy:** BYOD/contractor users can see what the organization can access/control and what WebGate does not route or collect.
+- **U-I-013 Safe defaults without hidden magic:** onboarding may automate secure configuration, but generated decisions are inspectable, reversible and do not create undeclared listeners/routes/trust roots.
+- **U-I-014 Consistent semantic status:** `Ready`, `Degraded`, `Offline`, `Denied`, `Revoked`, `Incompatible`, `Updating`, `RecoveryRequired` and related states have one shared meaning across client, admin UI, CLI, Telegram and support diagnostics.
+- **U-I-015 Human-observable rollback:** when an update/configuration/recovery action rolls back, the user sees the rollback result and final known-good state rather than only the initial failure.
+- **U-I-016 Journey evidence:** a workflow is not considered usable because individual buttons exist; complete representative journeys must pass with real release binaries and representative humans/test protocols.
+
+## 17.2 Findings accepted from the 2026-09-02 human usability audit
+
+- **U-F-001 — Client navigation can report false success:** CRITICAL → T-079. `/api/navigate` returns HTTP 200 with an internal `ok` field, while current UI treats `res.ok` as session success and does not require `data.ok`.
+- **U-F-002 — Network/backend failure can trigger synthetic navigation success:** CRITICAL → T-079. The client UI currently has a timed fallback that renders a successful capsule/session message after failed `/api/navigate` communication.
+- **U-F-003 — Silent standalone mock profile hides backend loss:** CRITICAL product trust → T-079. `/api/profile` failure can leave realistic demo data visible without a persistent `DEMO/OFFLINE` distinction.
+- **U-F-004 — Config binding can be shown as successful before backend acceptance:** CRITICAL → T-079. Frontend parses/mutates local profile state and displays success independently of authoritative transactional binding result.
+- **U-F-005 — GUI launch semantics do not yet prove a real BrowserCapsule launch:** CRITICAL → T-080. The inspected GUI navigation handler verifies request/transport state but does not itself own the real `BrowserCapsule::start/navigate` flow used by the CLI path.
+- **U-F-006 — End-user interface exposes implementation vocabulary:** HIGH → T-081. Relay addresses, profile/config file binding, `webgate://` route text, Ed25519 and broker/IPC telemetry dominate the ordinary client experience.
+- **U-F-007 — User lifecycle is device-centric rather than person-centric:** HIGH → T-082. Enrollment currently expects manual device/user IDs and public-key material instead of a human invitation/approval journey.
+- **U-F-008 — Service onboarding is implementation-centric:** HIGH → T-083. Registration requires slug, port, executable path and working directory even for applications that already exist and only need protected publication.
+- **U-F-009 — Error presentation lacks a shared semantic model:** HIGH → T-084. Policy denial, revoked device, transport outage, authority outage, service failure and browser incompatibility need distinct human-facing outcomes.
+- **U-F-010 — Troubleshooting begins with logs rather than task diagnosis:** HIGH → T-084. Operators need a causal health graph/connection doctor before raw relay/process/IPC details.
+- **U-F-011 — Accessibility semantics are incomplete:** HIGH → T-085. Russian client content is declared with `lang="en"`; clickable `div`/anchor-without-navigation patterns and non-announced transient toasts require semantic remediation.
+- **U-F-012 — Android Tier-1 human journey is incomplete:** HIGH → T-085. Android lifecycle primitives exist, but the inspected desktop launch path has no equivalent complete Android end-user shell/enrollment/application journey.
+- **U-F-013 — Admin information architecture mirrors internals:** MEDIUM/HIGH → T-086. Services/processes, releases, Telegram and low-level settings are more prominent than people/access/apps/sites/problems.
+- **U-F-014 — Release promotion has insufficient impact guardrails:** HIGH → T-086. A release can be promoted from the UI without a human-visible canary/ring/impact workflow owned by the current interface.
+- **U-F-015 — Service deletion/revocation/reactivation need stronger consequence previews:** HIGH → T-086. Generic confirm dialogs and direct status toggles do not communicate active sessions, affected people, audit/re-enrollment implications or rollback.
+- **U-F-016 — User/operator runbooks are incomplete:** MEDIUM/HIGH → T-087. Existing docs emphasize architecture/development/operations; complete first-service, first-user, lost-device, offboarding, degraded/offline, update and recovery journeys are not yet the qualification source.
+
+---
+
+## T-079 — Truthful client state and elimination of false-success/mock-success paths
+**Status:** READY · **Priority:** P0 immediate · **Owns:** U-F-001..U-F-004 · **Protects:** I-003, I-005, I-020, U-I-001..U-I-003, U-I-006, U-I-014
+
+### Required changes
+
+- `/api/navigate` must return semantically meaningful HTTP status plus a structured result; frontend success requires both a successful response and explicit authoritative navigation/session proof.
+- Remove every timer/mock fallback that renders `session established`, `capsule launched`, `protected`, `ready` or equivalent without real evidence.
+- If UI-to-core API is unavailable, switch to a persistent explicit `CORE OFFLINE` state; do not leave realistic sample profile/services visible as if live.
+- Demo mode, if retained, requires explicit build/runtime opt-in and a visually persistent `DEMO — NO PROTECTED CONNECTION` banner.
+- Config file selection remains `Pending validation` until the backend accepts and returns the committed profile version/hash/id; on rejection the previous UI state remains intact.
+- Frontend reload/reconcile from authoritative profile after every successful binding rather than trusting its own parser as the source of truth.
+- Toasts are supplementary; durable status surfaces hold critical state until resolved.
+- Add negative tests/browser automation for backend timeout, malformed response, `200 + ok:false`, HTTP 4xx/5xx, transport offline and rejected config.
+
+### Exit contract
+
+The UI cannot display a protected-success state unless a real owning backend/runtime proof exists. Killing the local core or returning any negative navigation/config result must produce an unmistakable failure/degraded state and zero synthetic success text.
+
+---
+
+## T-080 — Real GUI BrowserCapsule/session orchestration
+**Status:** TODO · **Priority:** P0 client · **Depends on:** T-079 and stable T-055/T-064 browser/session contracts · **Owns:** U-F-005 · **Protects:** I-001, I-004, P-I-002, P-I-003, U-I-001, U-I-003, U-I-014
+
+### Required architecture
+
+Create one application-session orchestration contract used by GUI/CLI/deep links:
+
+```text
+Requested
+  ↓ policy + device + transport checks
+Authorizing
+  ↓
+StartingProtectedBrowser
+  ↓ attach qualified proxy/session
+Navigating
+  ↓ actual browser/navigation confirmation
+Open
+  ↓
+Degraded / Denied / Incompatible / Offline / Closed
+```
+
+Requirements:
+
+- GUI invokes the real qualified BrowserCapsule/COMPAT engine adapter rather than only validating a request.
+- `Open` means a real protected browser instance/session exists for the intended application.
+- expose a stable session ID and human-safe application identity, not raw relay address as proof of connection.
+- deep-link and catalog launch use the same orchestration path.
+- browser process crash, navigation failure and transport loss update UI state deterministically.
+- no system-browser fallback for protected content.
+- telemetry distinguishes `requested`, `authorized`, `browser_started`, `navigation_committed`, `closed` without collecting page content.
+
+### Qualification
+
+Release-binary GUI E2E must prove click/tap → real BrowserCapsule → real protected route → target page and prove all negative states without false success.
+
+---
+
+## T-081 — End-user workspace, mental model and progressive disclosure
+**Status:** TODO · **Priority:** P0/P1 product UX · **Depends on:** T-079, T-080 · **Owns:** U-F-006 · **Protects:** U-I-004, U-I-005, U-I-007, U-I-012, U-I-014
+
+### Canonical end-user IA
+
+Ordinary user navigation should converge toward:
+
+```text
+Applications
+Recent / Favorites
+Help
+Settings
+```
+
+Primary screen answers:
+
+```text
+Which organization/workspace am I in?
+Is this device allowed and protected?
+Which applications can I open?
+Is anything currently preventing protected access?
+```
+
+### Terminology boundary
+
+Default user language:
+
+```text
+Destination → Application
+Profile → Organization / Workspace
+Route → Connection (only when needed)
+Capsule → Protected Browser
+Device ID → Device
+Fail-Closed → direct unsafe connection is blocked
+```
+
+Hide from ordinary surfaces unless troubleshooting/advanced:
+
+```text
+Relay / Origin
+WGRL / QUIC/H2 implementation details
+Broker / BrokerCapability
+raw Ed25519/public keys
+loopback proxy ports
+slug
+TOML/JSON configuration
+IPC telemetry
+```
+
+### Interaction features
+
+- search applications;
+- favorites/pinning;
+- recent applications;
+- categories supplied by authority/service catalog;
+- clear workspace/org identity;
+- deep links with human-readable preview where confirmation is required;
+- persistent current security state without alarmist noise;
+- automatic relay/path failover remains invisible unless it materially affects the task.
+
+### Exit contract
+
+A normal user can install/enroll/open an assigned application repeatedly without needing to understand or edit a relay, port, cryptographic key, route URL or configuration file.
+
+---
+
+## T-082 — Human identity, invitation, enrollment, BYOD and offboarding journeys
+**Status:** TODO · **Priority:** P0 product UX · **Depends on:** T-038/T-051/T-052 and device identity contract T-040 · **Owns:** U-F-007 · **Protects:** I-008..I-010, U-I-008, U-I-009, U-I-012
+
+### People/access model
+
+Admin UX treats the primary human relationship as:
+
+```text
+Person / Account
+  ├─ Groups / Roles
+  ├─ Application access
+  ├─ Devices
+  ├─ Active/recent sessions
+  └─ audit/history
+```
+
+### Enrollment flow
+
+```text
+Admin selects person/access
+  ↓
+Create short-lived invitation
+  ↓ QR / deep link / managed deployment token
+User opens WebGate
+  ↓
+organization + requested access preview
+  ↓
+local key generation
+  ↓
+PoP / SecureAcces authentication
+  ↓
+admin/policy approval where required
+  ↓
+Device Active
+```
+
+Never require ordinary administrators/users to paste a raw Ed25519 hex public key.
+
+### BYOD/contractor disclosure
+
+Before enrollment show:
+
+- organization identity;
+- assigned applications/scope;
+- access expiry when temporary;
+- what WebGate routes/monitors;
+- explicit statement that unrelated OS/application traffic is not routed through WebGate in normal application-scoped mode;
+- device metadata visible to administrator;
+- how to disconnect/remove the organization.
+
+### Lost-device and revocation journey
+
+Admin or permitted self-service:
+
+```text
+Person → Device → Lost/Compromised
+impact preview
+revoke
+terminate/deny sessions per policy
+record actor/reason/audit
+```
+
+Reactivation of a revoked/lost device requires explicit re-enrollment or fresh PoP/approval policy; a simple status flip is not sufficient for high-risk states.
+
+### Offboarding
+
+One account-level action previews and removes/revokes:
+
+- application/group grants;
+- enrolled devices;
+- sessions;
+- outstanding invitations/leases where authority supports revocation.
+
+Offboarding must be atomic/fail-closed as far as the authority contract permits and produce durable audit evidence.
+
+---
+
+## T-083 — Human-first application/service onboarding and admin IA
+**Status:** TODO · **Priority:** P1 product UX · **Depends on:** T-065, T-072, T-074 as applicable · **Owns:** U-F-008, part of U-F-013 · **Protects:** P-I-004, P-I-005, U-I-004, U-I-005, U-I-013
+
+### Application onboarding modes
+
+First ask how the application exists:
+
+```text
+Already running — WebGate only publishes/protects it
+WebGate-managed process
+systemd/SCM/launchd-managed
+container runtime
+external VM/host
+cluster/service endpoint
+```
+
+The standard existing-app flow asks primarily for:
+
+```text
+Application address
+Display name
+Who gets access
+optional compatibility mode
+```
+
+WebGate then performs safe preflight:
+
+- endpoint reachable from Origin;
+- loopback/private-boundary rules satisfied;
+- HTTP/TLS behavior detected;
+- WebSocket/SSE hints if observable;
+- browser compatibility qualification status where available;
+- chosen application/service name and generated internal slug/ID;
+- health probe suggestion.
+
+Advanced fields such as slug, executable, workdir, raw port, headers/timeouts and supervisor backend remain available under Advanced.
+
+### Admin information architecture target
+
+```text
+Overview
+People & Access
+Applications
+Devices
+Sites & Connectivity
+Health
+Updates
+Audit
+Settings
+  └─ Advanced Infrastructure
+```
+
+Advanced Infrastructure may contain relay fleet, Origin instances, ports, transport, process supervisor, SecureAcces adapter and raw configuration.
+
+### Exit contract
+
+Publishing a pre-existing internal web application should normally require no knowledge of WebGate process management and should produce a previewable application card/access policy before becoming visible to users.
+
+---
+
+## T-084 — Semantic error system, Connection Doctor and support workflow
+**Status:** TODO · **Priority:** P0/P1 usability/operations · **Depends on:** T-077 health signals plus T-079 · **Owns:** U-F-009, U-F-010 · **Protects:** U-I-003, U-I-007, U-I-014
+
+### Shared error taxonomy
+
+Map internal causes to stable product error categories, for example:
+
+```text
+ACCESS_DENIED
+DEVICE_REVOKED
+DEVICE_NOT_ENROLLED
+AUTHORITY_UNAVAILABLE
+AUTHORIZATION_EXPIRED
+PROTECTED_TRANSPORT_OFFLINE
+SERVICE_UNAVAILABLE
+SERVICE_STARTING
+BROWSER_INCOMPATIBLE
+CLOCK_UNTRUSTED
+UPDATE_REQUIRED
+CONFIGURATION_INVALID
+RECOVERY_REQUIRED
+```
+
+Every end-user error presentation contains:
+
+```text
+what happened
+what it means for the user's task
+safe next action
+retry only when useful
+contact/admin/support action
+expandable technical details + correlation/support ID
+```
+
+### Connection Doctor
+
+Build a causal human-readable health graph:
+
+```text
+WebGate Client
+Device identity
+Authorization
+Protected connection
+Origin/site
+Application
+Browser compatibility
+```
+
+Advanced expansion may show individual relays/transports, key IDs and probes.
+
+Doctor must distinguish examples such as:
+
+```text
+✓ Client
+✓ Device
+✓ Relay/path
+✓ Origin
+✓ Authorization
+✕ FactoryOS endpoint
+```
+
+instead of presenting an undifferentiated log stream.
+
+### Support bundle
+
+One action creates a redacted bundle/diagnostic ID containing version/platform, non-secret identity fingerprints, semantic health graph, relevant event windows, config/policy versions and failure categories while excluding private keys, tokens, page content and unrelated personal data.
+
+---
+
+## T-085 — Accessibility, localization and Tier-1 Android human journey
+**Status:** TODO · **Priority:** P1 product quality · **Depends on:** T-080/T-081 interaction model · **Owns:** U-F-011, U-F-012 · **Protects:** U-I-010, U-I-011, U-I-016
+
+### Web/client/admin accessibility
+
+- correct `lang` metadata per localized UI;
+- use semantic `button`, `a`, `input`, `dialog`, navigation/landmark elements rather than clickable generic containers;
+- all critical flows keyboard-operable;
+- visible focus and logical focus order;
+- modal focus trap and focus return;
+- `aria-live`/equivalent announcements for critical status transitions and errors;
+- do not rely on color alone for status;
+- reduced-motion preference remains supported;
+- minimum practical touch targets for mobile Tier-1 controls;
+- scalable text/zoom without loss of task functionality;
+- accessible names for icon-only controls;
+- tables/lists have meaningful headers/labels and mobile alternatives.
+
+### Localization
+
+Separate product strings from markup/code where practical and define RU/EN terminology glossary so security states are translated consistently. Internal protocol names remain untranslated technical identifiers inside diagnostics.
+
+### Android Tier-1 journey
+
+Qualify real Android application flows for:
+
+- install/managed install;
+- invitation/deep-link handoff;
+- local key creation/keystore;
+- enrollment/authentication;
+- application catalog;
+- protected browser launch;
+- back/forward/task-switch behavior;
+- orientation/activity recreation preserving safe non-secret state;
+- process death/restart;
+- low-memory recovery;
+- network change Wi-Fi↔cellular;
+- background/foreground session policy;
+- update flow;
+- lost/revoked device response;
+- accessibility services and large-font operation.
+
+Desktop responsive HTML alone does not qualify Android Tier-1.
+
+---
+
+## T-086 — Operator-safety UX for high-blast-radius actions
+**Status:** TODO · **Priority:** P1 enterprise UX · **Depends on:** T-051, T-072, T-075 and T-077 where applicable · **Owns:** U-F-013..U-F-015 · **Protects:** R-I-010, R-I-014, U-I-009, U-I-015
+
+### Impact-aware actions
+
+Before destructive/high-impact operations, compute and show consequences:
+
+- service deletion: users/groups with access, active sessions, process/file behavior, rollback/soft-delete semantics;
+- device revoke: active sessions and required re-enrollment;
+- person offboarding: grants/devices/sessions/invitations affected;
+- service restart/stop: current readiness, active sessions and expected drain behavior;
+- config/listener change: restart/connectivity impact and validation result;
+- backup restore: selected snapshot age, validation, RPO impact and preserved rollback copy;
+- trust/key rotation: affected identities and overlap window;
+- release promotion: rollout ring, device/node count, compatibility/health gates and automatic rollback rules.
+
+### Release UX
+
+Replace direct "promote to all" interaction with ring-aware flow:
+
+```text
+Build verified
+  ↓
+Internal canary
+  ↓ health evidence
+Pilot ring
+  ↓
+Partial production
+  ↓
+Broad production
+```
+
+Each stage shows population, health deltas, blocked/incompatible nodes and rollback capability.
+
+### Configuration changes
+
+Adopt:
+
+```text
+edit
+validate
+preview diff
+show impact
+apply to canary/scope if relevant
+verify health
+commit or rollback
+```
+
+High-risk enterprise actions may require reason entry, step-up authentication or two-person approval where policy defines it.
+
+---
+
+## T-087 — Complete human journey documentation, usability testing and final qualification
+**Status:** TODO · **Priority:** P0 final human/product gate · **Depends on:** T-079..T-086 as applicable, T-061 and representative T-078 resilience behavior · **Owns:** U-F-016 · **Protects:** U-I-001..U-I-016
+
+### Qualification principle
+
+Do not test only screens. Execute complete jobs using actual release binaries, realistic deployment state and representative roles. A journey passes only when the person reaches the intended outcome, understands the final state and cannot accidentally bypass a security boundary through the UI.
+
+### Journey matrix
+
+Every release maturity review maps each scenario to `PASS`, `PARTIAL`, `FAIL`, `NOT_APPLICABLE` with evidence and owner.
+
+| ID | Human journey | Primary owner |
+|---|---|---|
+| J-01 | Clean server/Origin installation and first setup | T-065/T-083 |
+| J-02 | Add an already-running local web application | T-083 |
+| J-03 | Add a WebGate-managed executable/service | T-072/T-083 |
+| J-04 | Add an application on another private host/site | T-074/T-083 |
+| J-05 | Create/import a person/account and assign application access | T-082 |
+| J-06 | Generate short-lived invitation/QR/deep link | T-082 |
+| J-07 | First client install and device enrollment | T-082/T-085 |
+| J-08 | First application open from catalog | T-080/T-081 |
+| J-09 | Daily open/search/favorite/recent application workflow | T-081 |
+| J-10 | Open a trusted deep link into a specific application path | T-080/T-081 |
+| J-11 | Access denied by policy | T-084 |
+| J-12 | Device revoked while trying to open an app | T-082/T-084 |
+| J-13 | Authority unavailable with strict fail-closed | T-060/T-084 |
+| J-14 | Authority unavailable with qualified bounded lease mode | T-060/T-084 |
+| J-15 | Relay/path failure with successful invisible failover | T-057/T-081 |
+| J-16 | All protected paths unavailable | T-079/T-084 |
+| J-17 | Protected application endpoint down | T-072/T-084 |
+| J-18 | Managed service crash + admin alert/recovery | T-072/T-084 |
+| J-19 | Browser incompatibility and STRICT/COMPAT decision | T-064/T-084 |
+| J-20 | Lost/stolen device revocation | T-082/T-086 |
+| J-21 | Safe device re-enrollment after revoke/loss | T-082 |
+| J-22 | Employee offboarding across grants/devices/sessions | T-082/T-086 |
+| J-23 | Contractor/BYOD temporary access with privacy disclosure | T-082 |
+| J-24 | Android field operator install→enroll→open→resume | T-085 |
+| J-25 | Keyboard-only end-user workflow | T-085 |
+| J-26 | Screen-reader enrollment/open/error workflow | T-085 |
+| J-27 | Administrator changes service/config with preview/rollback | T-086 |
+| J-28 | Canary release → pilot → production → rollback | T-075/T-086 |
+| J-29 | Create and verify backup from admin/operations workflow | T-073/T-086 |
+| J-30 | Guided restore/recovery after state loss | T-073/T-084/T-086 |
+| J-31 | Connection Doctor diagnosis and support bundle generation | T-077/T-084 |
+| J-32 | Uninstall/disconnect workspace and verify no hidden OS route/config residue | T-065/T-082 |
+| J-33 | Multi-Origin/site failover visible to admin but minimally disruptive to user | T-074/T-084 |
+| J-34 | Clock/trust problem explained without telling user to disable verification | T-076/T-084 |
+| J-35 | Telegram incident alert → safe quick action → open full admin detail | T-072/T-086 |
+| J-36 | Demo/preview build clearly distinguished from live protected mode | T-079 |
+
+### Test roles
+
+At minimum include:
+
+```text
+ordinary employee with no networking knowledge
+contractor/BYOD user
+field/Android operator
+small-company technical administrator
+enterprise IT/security administrator
+support/SRE operator
+accessibility participant or scripted assistive-technology qualification
+```
+
+### Human metrics
+
+Record by journey/role/platform:
+
+- completion success rate;
+- time on task median/p95 where meaningful;
+- number of required technical concepts/manual values;
+- misclick/recovery rate;
+- number of administrator interventions;
+- false-success/false-ready incidence — target zero;
+- security-boundary misunderstandings;
+- error comprehension and successful recovery rate;
+- accessibility blockers;
+- support escalation rate;
+- System Usability Scale or equivalent standardized measure may be tracked as supporting evidence but never replaces task-level results.
+
+### Target usability contracts
+
+Before `Enterprise Qualified`, at minimum:
+
+- ordinary user enrollment + first assigned app requires no manual key/relay/port/config editing;
+- routine app open requires one intentional app selection after client/workspace is ready;
+- known access/transport/service failure has a distinct actionable human message;
+- no production UI contains a hidden mock fallback;
+- no success state can be reached by frontend-only optimistic simulation;
+- Tier-1 Android critical journeys pass on real device/emulator qualification appropriate to the release claim;
+- critical desktop/admin journeys pass keyboard-only;
+- high-impact admin actions show impact and final result/rollback state;
+- user documentation covers every supported journey and points to the same terminology/status model as the application.
+
+---
+
+## 17.3 Human-facing status model
+
+All surfaces should map detailed internal state into a small consistent human model.
+
+### End user
+
+```text
+Protected / Ready
+Connecting
+Limited / Degraded
+Access denied
+Application unavailable
+WebGate unavailable / Offline
+Device access revoked
+Update required
+```
+
+### Administrator
+
+```text
+Healthy
+Degraded
+Unavailable
+Maintenance / Draining
+Needs attention
+Recovery required
+```
+
+Technical reason codes remain accessible under details and in support evidence.
+
+Never show `Protected`, `Connected`, `Ready`, `Running`, `Delivered`, `Promoted` or `Restored` solely because an API call was attempted or a process was spawned.
+
+---
+
+## 17.4 Revised multi-lane dependency model
+
+```text
+SECURITY
+T-053 → T-054 → T-055 → ... → T-061
+
+RESILIENCE
+T-070 → T-071..T-077 → T-078
+
+HUMAN TRUTH / CLIENT
+T-079 → T-080 → T-081 ───────────────┐
+                  └→ T-084 ──────────┤
+
+IDENTITY / ACCESS UX                 │
+T-038/T-040/T-051/T-052 → T-082 ────┤
+
+ADMIN / ONBOARDING UX                │
+T-065/T-072/T-074 → T-083 ──────────┤
+T-051/T-072/T-075/T-077 → T-086 ────┤
+
+ACCESSIBILITY / ANDROID              │
+T-080/T-081 → T-085 ────────────────┤
+                                     ▼
+                              T-087 Human Journey Gate
+                                     │
+T-061 + T-078 + product gates ───────┤
+                                     ▼
+                              T-069 Enterprise Qualified
+```
+
+Current priority is revised only where human truth is a security/product correctness issue:
+
+1. T-053 remains the highest-priority network security implementation.
+2. **T-079 may proceed immediately in parallel and is P0** because false-success/mock-success UI must not survive into pilots.
+3. T-054 → T-055 continue as security P0.
+4. T-080 follows once the real browser/session contract is stable enough to bind GUI semantics to it.
+5. T-070 resilience architecture can continue in parallel.
+6. T-081/T-082/T-083/T-084 reshape the product around human tasks as their backend contracts stabilize.
+7. T-085 and T-086 qualify accessibility/mobile/operator safety.
+8. T-087 is mandatory before T-069 can claim `Enterprise Qualified`.
+
+---
+
+## 17.5 Human usability evidence dashboard
+
+### End-user simplicity
+
+- invitation→enrollment completion rate;
+- median/p95 enrollment time;
+- app-open success rate;
+- clicks/taps to reopen a recent/favorite application;
+- percentage of ordinary journeys requiring relay/port/key/config knowledge — target zero;
+- deep-link success and understandable failure rate.
+
+### Truthfulness
+
+- false-positive connected/protected/ready states — target zero;
+- frontend/backend state mismatch count;
+- mock/demo state observed in production build — target zero;
+- optimistic mutation rollback count and visibility.
+
+### Errors and recovery
+
+- semantic error classification coverage;
+- error-to-successful-recovery rate;
+- average steps to reach Connection Doctor diagnosis;
+- support bundle success/redaction verification;
+- repeated retry loops caused by unclear messaging.
+
+### Administration
+
+- median/p95 first-service time;
+- percentage of application registrations completed without Advanced fields;
+- person offboarding completion time/error rate;
+- lost-device revoke completion time;
+- high-impact actions abandoned because impact is unclear;
+- rollback success visibility.
+
+### Accessibility/mobile
+
+- keyboard-only journey pass rate;
+- screen-reader critical journey pass rate;
+- touch-target/zoom/large-text regressions;
+- Android install/enroll/open/resume pass rate by supported OS range;
+- activity/process recreation state-loss regressions.
+
+Do not optimize time-on-task by hiding meaningful security choices or auto-approving access that policy requires a human to review.
+
+---
+
+## 17.6 Human-centered convergence criterion
+
+WebGate is `Human Journey Qualified` only when:
+
+- T-079..T-087 required for the claimed platforms/use cases are DONE;
+- zero known false-success or silent mock/live ambiguity remains in production UI;
+- the default employee journey hides relay/origin/port/key/config internals;
+- GUI application launch uses the real protected browser/session runtime;
+- invitation/enrollment/device revoke/offboarding are person-centered and cryptographically bound;
+- application onboarding supports both already-running services and WebGate-managed processes without forcing process fields on every administrator;
+- semantic errors and Connection Doctor cover the supported failure taxonomy;
+- Tier-1 accessibility and Android critical journeys have executable/manual evidence;
+- destructive/high-blast-radius admin operations have impact preview and auditable confirmation;
+- J-01..J-36 are PASS or explicitly NOT_APPLICABLE for the release claim, with no Critical usability/security finding unresolved;
+- representative human testing shows users can correctly distinguish protected, denied, degraded, offline, demo and recovery states;
+- user/operator documentation matches current release behavior and terminology;
+- T-087 evidence is attached to the exact release state.
+
+`Enterprise Qualified` therefore requires **technical convergence + resilience qualification + commercial/product qualification + human-journey qualification**. No visual polish, demo script or marketing claim can substitute for these gates.
