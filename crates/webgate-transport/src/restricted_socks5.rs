@@ -325,10 +325,11 @@ impl RestrictedSocks5Transport {
 
     #[must_use]
     pub fn status_handle(&self) -> Option<RestrictedProxyStatusHandle> {
-        self.local_endpoint.map(|endpoint| RestrictedProxyStatusHandle {
-            state: Arc::clone(&self.state),
-            endpoint,
-        })
+        self.local_endpoint
+            .map(|endpoint| RestrictedProxyStatusHandle {
+                state: Arc::clone(&self.state),
+                endpoint,
+            })
     }
 
     fn literal_loopback_upstream(&self) -> Result<SocketAddr, RestrictedProxyError> {
