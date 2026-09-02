@@ -8,45 +8,44 @@ on:
       - ".github/workflows/browser-truth-diagnostic.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  repair-and-verify:
+  capture-repaired:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, Node 24
-        with:
-          persist-credentials: true
-      - name: Repair deterministic probe timing
+      - name: Apply deterministic probe timing candidate
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p = Path('scripts/test_client_ui_browser.py')
           s = p.read_text()
-          old_start = "  window.addEventListener('load', async () => {{"
-          new_start = "  setTimeout(async () => {{"
-          old_tail = "  }});\n}})();\n</script>"
-          new_tail = "  }}, 500);\n}})();\n</script>"
-          old_fail = '            fail_fragment = "WEBGATE_BROWSER_TRUTH_FAIL:"'
-          new_fail = '            fail_fragment = f"WEBGATE_BROWSER_TRUTH_FAIL:{scenario}:"'
-          assert s.count(old_start) == 1, s.count(old_start)
-          assert s.count(old_tail) == 1, s.count(old_tail)
-          assert s.count(old_fail) == 1, s.count(old_fail)
-          s = s.replace(old_start, new_start)
-          s = s.replace(old_tail, new_tail)
-          s = s.replace(old_fail, new_fail)
-          s = s.replace('"--virtual-time-budget=2500",', '"--virtual-time-budget=4000",')
+          pairs = [
+              ("  window.addEventListener('load', async () => {{", "  setTimeout(async () => {{"),
+              ("  }});\n}})();\n</script>", "  }}, 500);\n}})();\n</script>"),
+              ('            fail_fragment = "WEBGATE_BROWSER_TRUTH_FAIL:"', '            fail_fragment = f"WEBGATE_BROWSER_TRUTH_FAIL:{scenario}:"'),
+              ('"--virtual-time-budget=2500",', '"--virtual-time-budget=4000",'),
+          ]
+          for old, new in pairs:
+              if old in s:
+                  s = s.replace(old, new)
           p.write_text(s)
           PY
-      - name: Run real browser qualification
-        run: python3 scripts/test_client_ui_browser.py
-      - name: Commit qualified harness and remove diagnostic workflow
+      - name: Capture repaired browser qualification
+        shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/browser-truth-diagnostic.yml
-          git add scripts/test_client_ui_browser.py
-          git commit -m "test(client): make browser truth harness deterministic"
-          git push origin HEAD:main
+          set +e
+          python3 scripts/test_client_ui_browser.py > repaired-browser-truth.log 2>&1
+          code=$?
+          echo "EXIT=$code" >> repaired-browser-truth.log
+          cat repaired-browser-truth.log
+          exit 0
+      - name: Upload repaired diagnostic
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: repaired-browser-truth-diagnostic
+          path: repaired-browser-truth.log
+          if-no-files-found: error
