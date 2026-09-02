@@ -259,7 +259,10 @@ impl ApplicationSessionManager {
         }
         active.capsule = None;
         active.snapshot.state = ApplicationSessionState::Closed;
-        active.snapshot.transitions.push(ApplicationSessionState::Closed);
+        active
+            .snapshot
+            .transitions
+            .push(ApplicationSessionState::Closed);
         active.snapshot.message = "protected browser session closed".to_string();
         Some(active.snapshot.clone())
     }
@@ -349,7 +352,10 @@ mod tests {
 
         assert_eq!(result.state, ApplicationSessionState::Denied);
         assert_eq!(manager.active_capsule_count(), 0);
-        assert_eq!(result.transitions.last(), Some(&ApplicationSessionState::Denied));
+        assert_eq!(
+            result.transitions.last(),
+            Some(&ApplicationSessionState::Denied)
+        );
         assert_ne!(result.state, ApplicationSessionState::Open);
     }
 
@@ -389,7 +395,10 @@ mod tests {
 
         let closed = manager.close(&opened.session_id).unwrap();
         assert_eq!(closed.state, ApplicationSessionState::Closed);
-        assert_eq!(closed.transitions.last(), Some(&ApplicationSessionState::Closed));
+        assert_eq!(
+            closed.transitions.last(),
+            Some(&ApplicationSessionState::Closed)
+        );
         assert_eq!(manager.active_capsule_count(), 0);
         assert_eq!(
             manager.get(&opened.session_id).unwrap().state,
