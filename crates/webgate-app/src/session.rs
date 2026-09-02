@@ -56,6 +56,7 @@ pub struct ApplicationSessionSnapshot {
     pub target_url: String,
     pub state: ApplicationSessionState,
     pub message: String,
+    pub transitions: Vec<ApplicationSessionState>,
 }
 
 #[derive(Debug)]
@@ -91,12 +92,17 @@ impl ApplicationSessionManager {
         target_url: String,
         state: ApplicationSessionState,
         message: impl Into<String>,
+        mut transitions: Vec<ApplicationSessionState>,
     ) -> ApplicationSessionSnapshot {
+        if transitions.last().copied() != Some(state) {
+            transitions.push(state);
+        }
         let snapshot = ApplicationSessionSnapshot {
             session_id: session_id.clone(),
             target_url,
             state,
             message: message.into(),
+            transitions,
         };
         self.sessions.insert(
             session_id,
@@ -125,7 +131,9 @@ impl ApplicationSessionManager {
     ) -> ApplicationSessionSnapshot {
         let session_id = self.next_session_id();
         let target_url = target_url.to_string();
+        let mut transitions = vec![ApplicationSessionState::Requested];
 
+        transitions.push(ApplicationSessionState::Authorizing);
         let internal_broker_token = format!("wg-internal-broker-{}", self.next_sequence);
         let gate = BrokerSecurityGate::new(
             vec![
@@ -149,6 +157,7 @@ impl ApplicationSessionManager {
                 target_url,
                 ApplicationSessionState::Denied,
                 format!("navigation capability denied: {error:?}"),
+                transitions,
             );
         }
 
@@ -162,8 +171,10 @@ impl ApplicationSessionManager {
                 target_url,
                 ApplicationSessionState::Offline,
                 "protected transport is not ready",
+                transitions,
             );
         }
+        transitions.push(ApplicationSessionState::TransportReady);
 
         let Some(proxy) = protected_proxy else {
             return self.insert_terminal(
@@ -171,17 +182,20 @@ impl ApplicationSessionManager {
                 target_url,
                 ApplicationSessionState::Offline,
                 "protected transport is missing its verified loopback proxy",
+                transitions,
             );
         };
         let policy = profile.build_navigation_policy();
         let mut capsule = BrowserCapsule::new(BrowserKind::Servo, policy);
 
+        transitions.push(ApplicationSessionState::StartingProtectedBrowser);
         if let Err(error) = capsule.attach_proxy(proxy.socket_addr()) {
             return self.insert_terminal(
                 session_id,
                 target_url,
                 ApplicationSessionState::Failed,
                 format!("protected browser proxy attachment failed: {error:?}"),
+                transitions,
             );
         }
 
@@ -191,9 +205,11 @@ impl ApplicationSessionManager {
                 target_url,
                 ApplicationSessionState::Failed,
                 format!("protected browser start failed: {error:?}"),
+                transitions,
             );
         }
 
+        transitions.push(ApplicationSessionState::Navigating);
         if let Err(error) = capsule.navigate(&target_url) {
             let state = match error {
                 CapsuleError::NavigationPolicyViolation(_) => ApplicationSessionState::Denied,
@@ -204,6 +220,7 @@ impl ApplicationSessionManager {
                 target_url,
                 state,
                 format!("protected browser navigation failed: {error:?}"),
+                transitions,
             );
         }
 
@@ -211,11 +228,13 @@ impl ApplicationSessionManager {
         // initialize/load_url methods do not yet own a real Servo engine/webview
         // or provide a renderer/navigation-commit proof. Retain the capsule for
         // lifecycle ownership, but never claim Open.
+        transitions.push(ApplicationSessionState::RendererUnqualified);
         let snapshot = ApplicationSessionSnapshot {
             session_id: session_id.clone(),
             target_url,
             state: ApplicationSessionState::RendererUnqualified,
             message: "BrowserCapsule accepted proxy and navigation intent, but the embedded renderer is not production-qualified; protected Open is blocked".to_string(),
+            transitions,
         };
         self.sessions.insert(
             session_id,
@@ -227,6 +246,7 @@ impl ApplicationSessionManager {
         snapshot
     }
 
+    #[cfg(test)]
     #[must_use]
     pub fn get(&self, session_id: &str) -> Option<ApplicationSessionSnapshot> {
         self.sessions.get(session_id).map(|s| s.snapshot.clone())
@@ -239,10 +259,12 @@ impl ApplicationSessionManager {
         }
         active.capsule = None;
         active.snapshot.state = ApplicationSessionState::Closed;
+        active.snapshot.transitions.push(ApplicationSessionState::Closed);
         active.snapshot.message = "protected browser session closed".to_string();
         Some(active.snapshot.clone())
     }
 
+    #[cfg(test)]
     #[must_use]
     pub fn active_capsule_count(&self) -> usize {
         self.sessions
@@ -275,6 +297,14 @@ mod tests {
 
         assert_eq!(result.state, ApplicationSessionState::Offline);
         assert_eq!(manager.active_capsule_count(), 0);
+        assert_eq!(
+            result.transitions,
+            vec![
+                ApplicationSessionState::Requested,
+                ApplicationSessionState::Authorizing,
+                ApplicationSessionState::Offline,
+            ]
+        );
         assert_ne!(result.state, ApplicationSessionState::Open);
     }
 
@@ -291,6 +321,17 @@ mod tests {
 
         assert_eq!(result.state, ApplicationSessionState::RendererUnqualified);
         assert_eq!(manager.active_capsule_count(), 1);
+        assert_eq!(
+            result.transitions,
+            vec![
+                ApplicationSessionState::Requested,
+                ApplicationSessionState::Authorizing,
+                ApplicationSessionState::TransportReady,
+                ApplicationSessionState::StartingProtectedBrowser,
+                ApplicationSessionState::Navigating,
+                ApplicationSessionState::RendererUnqualified,
+            ]
+        );
         assert_ne!(result.state, ApplicationSessionState::Open);
         assert!(result.message.contains("not production-qualified"));
     }
@@ -308,6 +349,7 @@ mod tests {
 
         assert_eq!(result.state, ApplicationSessionState::Denied);
         assert_eq!(manager.active_capsule_count(), 0);
+        assert_eq!(result.transitions.last(), Some(&ApplicationSessionState::Denied));
         assert_ne!(result.state, ApplicationSessionState::Open);
     }
 
@@ -347,6 +389,7 @@ mod tests {
 
         let closed = manager.close(&opened.session_id).unwrap();
         assert_eq!(closed.state, ApplicationSessionState::Closed);
+        assert_eq!(closed.transitions.last(), Some(&ApplicationSessionState::Closed));
         assert_eq!(manager.active_capsule_count(), 0);
         assert_eq!(
             manager.get(&opened.session_id).unwrap().state,
