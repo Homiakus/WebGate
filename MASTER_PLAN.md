@@ -67,10 +67,10 @@ Material unexpected evidence becomes an `F-XXX` finding before task scope/order 
 - **T-050:** data-plane depends on context-aware `ServiceAuthorizer`; unavailable authority → `503`, policy deny → `403`.
 - **T-052 public half:** loopback-only remote authority bridge, exact AccountID/DeviceID binding, strict response validation, bounded bodies/timeouts, no redirects/proxy escape, control-secret scrubbing for child services.
 - **T-039:** WebGate-owned service/device/release/control/audit state is durable and recovery-qualified in `main` at `aad9be2ff541f12b2281e76dfae384175bdcefd8`; repeated main CI run `33473723354` passed all jobs.
+- **T-036:** real destination-restricted browser-facing loopback SOCKS5 proxy with local domain/port policy enforcement, live handshake verification, loopback-only plaintext sidecar upstream, and live endpoint revocation on transport/sidecar failure.
 
 ## Still not production-qualified
 
-- Real destination-restricted browser-facing proxy/provider.
 - Real primary/fallback protected transports and independent Relay A/B.
 - Origin reverse-connectivity/no-public-IP path.
 - Real Servo/browser runtime forced through protected proxy.
@@ -150,7 +150,23 @@ Status vocabulary: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS
 
 ## DONE foundations
 
-T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2 and **T-039** are DONE under their recorded scopes.
+T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039 and **T-036** are DONE under their recorded scopes.
+
+### T-036 — Real destination-restricted loopback proxy + primary provider
+**Status:** DONE · **Priority:** P0
+
+Evidence chain:
+- Characterization / RED: `2be41065...`, `5ac5ea91...`.
+- Green & hardened: `d9a6ce6b...`, `ea716374...`, `690ea51...`.
+- Negative tests: empty destination policy rejected, plaintext non-loopback upstream rejected, non-SOCKS5 sidecar rejected, destination port / domain policy enforced locally before connect, UDP/BIND rejected, domain preservation for upstream DNS, live status revokes endpoint on sidecar failure.
+
+Qualified contract:
+- local loopback-only SOCKS5 proxy listener;
+- literal loopback upstream restriction for unencrypted sidecar;
+- destination policy enforcement (domains, ports, CONNECT-only);
+- live handshake and readiness probe before advertising endpoint;
+- endpoint revocation immediately upon sidecar failure or connection drop;
+- no OS default route modification.
 
 ### T-039 — Durable transactional WebGate-owned state
 **Status:** DONE · **Priority:** P0/P1
@@ -192,11 +208,6 @@ Public bridge is qualified in WebGate. Private RED `c0a0f82c...` and candidate `
 **Status:** TODO · **Priority:** P0
 
 Replace shared-token-only management with request-scoped SecureAcces principal/actor authorization. Shared token may remain only as explicitly scoped bootstrap/recovery factor. Converge privileged action + durable audit into a fail-closed management transaction where feasible.
-
-### T-036 — Real destination-restricted loopback proxy + primary provider
-**Status:** READY · **Priority:** P0
-
-Implement the first real browser-facing loopback proxy/provider. It must own a real listener, expose a proxy endpoint only after bind/readiness proof, restrict destinations by policy/session rather than becoming a generic proxy, and fail closed on provider/listener loss. No OS default-route changes.
 
 ### T-037 — Origin agent + reverse Relay A/B connectivity
 **Status:** TODO · **Priority:** P0
@@ -241,7 +252,7 @@ Historical T-004/T-005/T-008/T-010/T-011/T-012/T-013/T-014/T-015/T-016/T-019/T-0
 ```text
 T-049 DONE → T-050 DONE → T-052(private) → T-051 → T-038 convergence ───────────────┐
 T-039 DONE ──────────────────────────────────────────────────────────────────────────┼→ T-045
-T-035 DONE → T-036 → T-037 ─────────────────────────────────────────────────────────┤
+T-035 DONE → T-036 DONE → T-037 ─────────────────────────────────────────────────────┤
              ├→ T-040 ───────────────────────────────────────────────────────────────┤
              ├→ T-041 ───────────────────────────────────────────────────────────────┤
              └→ T-042 ───────────────────────────────────────────────────────────────┘
@@ -253,7 +264,7 @@ T-045 → T-046 → T-047.
 Priority now:
 1. check private SecureAcces executable CI once;
 2. if available: finish T-052 → T-051;
-3. if still externally blocked: execute T-036 → T-037;
+3. if still externally blocked: execute T-037 (Origin agent + reverse Relay A/B connectivity);
 4. T-040 → T-041;
 5. T-044/T-042/T-048;
 6. T-045 → T-046 → T-047.
@@ -347,6 +358,7 @@ Green CI never overrules a stronger invariant. A workflow that never starts exec
 - **Iteration 14 / T-039A:** ownership boundary; pointer mutant killed; `26d05d53...` repeated main PASS.
 - **Iteration 15 / T-039B1:** transactional durable registries; persist-order mutant killed; `30481a7b...`; run `33471683325` PASS.
 - **Iteration 16 / T-039B2:** audit/control/recovery. RED `72d510a0...`; secret mutant `b1dda3ef...` killed; qualified tree `9491e382...`; final/main `aad9be2ff541f12b2281e76dfae384175bdcefd8`; run `33473723354` PASS. During promotion two accidental empty-placeholder commits were created by contents-write; they were forward-corrected without force/rewrite, and the final qualified tree contains no placeholder file.
+- **Iteration 17 / T-036:** real destination-restricted loopback SOCKS5 proxy with local domain/port policy enforcement, live handshake verification, loopback-only plaintext sidecar upstream, and live endpoint revocation on transport/sidecar failure. RED `2be41065...`; green/hardened `690ea51...`; integration & quality gates PASS.
 
 ---
 
@@ -355,6 +367,13 @@ Green CI never overrules a stronger invariant. A workflow that never starts exec
 ```text
 WEBGATE QUALIFIED MAIN: aad9be2ff541f12b2281e76dfae384175bdcefd8
 SECUREACCES LAST KNOWN MAIN: 827abb1add11a9fcbd0a9944e65efbd20c675739
+
+T-036 DONE:
+- real destination-restricted SOCKS5 proxy listener (loopback)
+- domain, port, and CONNECT-only policy enforcement
+- literal loopback upstream restriction for unencrypted sidecar
+- live handshake and readiness probe before advertising endpoint
+- live endpoint revocation on transport/sidecar failure
 
 T-039 DONE:
 - durable service/device/release state
@@ -378,8 +397,8 @@ response fails closed, but action+audit are not one transaction → T-051.
 
 NEXT:
 1) one controlled SecureAcces private-CI recheck
-2) if still blocked: T-036 real loopback protected proxy/provider
-3) T-037 Origin reverse connectivity
+2) if still blocked: T-037 Origin reverse connectivity
+3) T-040 Production platform key stores
 
 NO FORCE PUSH.
 ```
