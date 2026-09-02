@@ -71,10 +71,10 @@ Material unexpected evidence becomes an `F-XXX` finding before task scope/order 
 - **T-037:** Origin agent maintaining persistent authenticated outbound reverse sessions to independent Relay A and Relay B without public inbound ports / CGNAT traversal, multiplexed stream dispatching, loopback-only data gateway forwarding, and automatic reconnect resilience.
 - **T-040:** Safe pure-Rust RFC 8032 Ed25519 & FIPS 180-4 SHA-512 cryptographic engine, atomic disk-persisted `PersistentFileDeviceKeyStore` with memory zeroing, corruption fail-closed verification, and Proof-of-Possession signature contract compatible with Go server.
 - **T-041:** Real Servo embedding adapter and BrowserCapsule with strict fail-closed loopback proxy enforcement, subresource policy verification, lifecycle preservation, and document rendering qualification (SPA, CSR, SSR).
+- **T-042:** High-availability dual-relay failover transport (`DualRelayFailoverTransport`) managing independent Relay A and Relay B upstreams, live health observation, immediate relay failover on primary crash, cooldown-aware standby probe and switchback, and seamless BrowserCapsule integration.
 
 ## Still not production-qualified
 
-- Real primary/fallback protected transports and independent Relay A/B.
 - Private SecureAcces provider in its own qualified `main`.
 - SecureAcces-owned durable state + recovery qualification.
 - SecureAcces-backed administrator management authorization.
@@ -150,7 +150,25 @@ Status vocabulary: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS
 
 ## DONE foundations
 
-T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037, T-040 and **T-041** are DONE under their recorded scopes.
+T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037, T-040, T-041 and **T-042** are DONE under their recorded scopes.
+
+### T-042 — Real dual-transport / dual-relay failover
+**Status:** DONE · **Priority:** P1
+
+Evidence chain:
+- `DualRelayFailoverTransport` managing independent Primary (Relay A) and Fallback (Relay B) upstreams over a unified, destination-restricted loopback SOCKS5 proxy listener.
+- Live probe validation at startup: starts on Primary if available (`Ready`), degrades to Fallback if Primary is down (`Degraded`), or fails closed if both are down (`Offline`, `DualRelayError::AllUpstreamsUnavailable`).
+- Automatic live failover: detects primary connection drop / timeout / error during client traffic and immediately fails over to Fallback upstream without interrupting local proxy listener.
+- Cooldown-aware standby primary probing and switchback: `probe_and_maybe_switchback()` validates primary recovery after `switchback_cooldown_sec` and returns active routing to Primary.
+- Full destination policy enforcement: domain and port whitelisting enforced locally before upstream connect; non-loopback plaintext upstreams rejected fail-closed.
+- `BrowserCapsule` end-to-end integration: Servo-powered capsule navigates and performs subresource fetches across live relay failover without browser engine recreation.
+- Client main entrypoint (`crates/webgate-app/src/main.rs`) wired to `DualRelayFailoverTransport`.
+- Integration test suites in `crates/webgate-transport/tests/dual_failover.rs` (7/7 PASS) and `crates/webgate-browser/tests/proxy_enforcement.rs` (6/6 PASS).
+
+Qualified contract:
+- Protected corporate web content routes across independent multi-relay infrastructure with zero single points of network failure (`I-013`, `I-014`).
+- Browser capsule never recreates or alters security boundary during transport failover (`I-001`, `I-004`, `I-006`).
+- Total transport outage fails closed immediately without silent fallback (`I-003`).
 
 ### T-041 — Real Servo runtime + enforced protected proxy
 **Status:** DONE · **Priority:** P0
@@ -264,9 +282,6 @@ Public bridge is qualified in WebGate. Private RED `c0a0f82c...` and candidate `
 
 Replace shared-token-only management with request-scoped SecureAcces principal/actor authorization. Shared token may remain only as explicitly scoped bootstrap/recovery factor. Converge privileged action + durable audit into a fail-closed management transaction where feasible.
 
-### T-042 — Real dual-transport / dual-relay failover
-**Status:** TODO · **Priority:** P1
-
 ### T-044 — Trustworthy security feedback loop
 **Status:** TODO · **Priority:** P1
 
@@ -298,8 +313,7 @@ Historical T-004/T-005/T-008/T-010/T-011/T-012/T-013/T-014/T-015/T-016/T-019/T-0
 ```text
 T-049 DONE → T-050 DONE → T-052(private) → T-051 → T-038 convergence ───────────────┐
 T-039 DONE ──────────────────────────────────────────────────────────────────────────┼→ T-045
-T-035 DONE → T-036 DONE → T-037 DONE → T-040 DONE → T-041 DONE ───────────────────────┤
-             └→ T-042 ───────────────────────────────────────────────────────────────┘
+T-035 DONE → T-036 DONE → T-037 DONE → T-040 DONE → T-041 DONE → T-042 DONE ─────────┘
 T-044 must land before T-045 final qualification.
 T-048 is independent High/P1 work.
 T-045 → T-046 → T-047.
@@ -308,9 +322,8 @@ T-045 → T-046 → T-047.
 Priority now:
 1. check private SecureAcces executable CI once;
 2. if available: finish T-052 → T-051;
-3. T-042 (Real dual-transport / dual-relay failover);
-4. T-044/T-048;
-5. T-045 → T-046 → T-047.
+3. T-044 / T-048;
+4. T-045 → T-046 → T-047.
 
 ---
 
@@ -414,14 +427,30 @@ Green CI never overrules a stronger invariant. A workflow that never starts exec
 - **Iteration 17 / T-036:** real destination-restricted loopback SOCKS5 proxy with local domain/port policy enforcement, live handshake verification, loopback-only plaintext sidecar upstream, and live endpoint revocation on transport/sidecar failure. RED `2be41065...`; green/hardened `690ea51...`; integration & quality gates PASS.
 - **Iteration 18 / T-037:** Origin reverse agent with persistent authenticated reverse Relay A/B connectivity and standalone Relay transit node. Integration tests in `pkg/origin` and `pkg/relay`; multi-relay end-to-end, stream multiplexing, auto-reconnect on restart, non-loopback rejection, and fail-closed gates PASS.
 - **Iteration 19 / T-040:** Safe pure-Rust RFC 8032 Ed25519 and FIPS 180-4 SHA-512 engine with `#![forbid(unsafe_code)]` and `PersistentFileDeviceKeyStore` with atomic file write, memory zeroing, corruption fail-closed verification, and Proof-of-Possession contract compatibility with Go server. Test vectors and integration tests PASS (`3f8fa7e`).
+- **Iteration 20 / T-041:** Real Servo embedding adapter and BrowserCapsule with strict fail-closed loopback proxy enforcement, subresource policy verification, lifecycle preservation, and document rendering qualification (SPA, CSR, SSR). (`28fb8d5`).
+- **Iteration 21 / T-042:** High-availability dual-relay failover transport (`DualRelayFailoverTransport`) managing independent Primary (Relay A) and Fallback (Relay B) upstreams over unified loopback proxy, live health observation, immediate relay failover on primary crash, cooldown-aware standby probe and switchback, and seamless BrowserCapsule integration. Integration suites in `webgate-transport` and `webgate-browser` PASS (`ee7cd21`).
 
 ---
 
 # 11. Context checkpoint
 
 ```text
-WEBGATE QUALIFIED MAIN: 3f8fa7eb822881f20a8a784095e94f991dafc55c
+WEBGATE QUALIFIED MAIN: ee7cd211f440a3d53ebbc1a052ff6aa80fbcf2c8
 SECUREACCES LAST KNOWN MAIN: 827abb1add11a9fcbd0a9944e65efbd20c675739
+
+T-042 DONE:
+- DualRelayFailoverTransport with independent Primary (Relay A) & Fallback (Relay B) upstreams
+- Loopback-only unified proxy listener with destination policy enforcement (I-006)
+- Live health observation, consecutive failure tracking, and instant failover on primary drop
+- Cooldown-aware standby primary probing and automatic switchback
+- BrowserCapsule integration with seamless failover across live relay failure
+- Integration test suites in crates/webgate-transport/tests/dual_failover.rs (7/7 PASS) and crates/webgate-browser/tests/proxy_enforcement.rs (6/6 PASS)
+
+T-041 DONE:
+- ServoEmbeddingAdapter & BrowserCapsule with fail-closed loopback proxy enforcement
+- Subresource network fetch validation against NavigationPolicy
+- SPA, CSR, and SSR rendering qualification
+- Platform lifecycle transitions (pause, resume, low-memory trim, recreation)
 
 T-040 DONE:
 - Safe pure-Rust RFC 8032 Ed25519 & FIPS 180-4 SHA-512 under #![forbid(unsafe_code)]
@@ -466,8 +495,8 @@ response fails closed, but action+audit are not one transaction → T-051.
 
 NEXT:
 1) one controlled SecureAcces private-CI recheck
-2) T-041 Real Servo runtime + enforced protected proxy
-3) T-042 Real dual-transport / dual-relay failover
+2) T-044 Trustworthy security feedback loop / T-048 Transactional fail-closed runtime client config binding
+3) T-045 Real end-to-end qualification
 
 NO FORCE PUSH.
 ```
