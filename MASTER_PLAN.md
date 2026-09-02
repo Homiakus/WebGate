@@ -134,7 +134,7 @@ Historical F-001..F-028 remain in Git history.
 - **F-036 — Admin auth is interim shared token:** OPEN/CONTAINED / High → T-051.
 - **F-037 — Explicit config failed open:** RESOLVED by T-035.
 - **F-038 — Race/mutation/fuzz CI depth missing:** OPEN / High → T-044.
-- **F-039 — Runtime client config can report false success:** OPEN / High → T-048.
+- **F-039 — Runtime client config can report false success:** RESOLVED by T-048.
 - **F-040 — SecureAcces dependency/auth boundaries under-modeled:** PARTIALLY RESOLVED by T-049/T-050; T-052/T-051 remain.
 - **F-041 — Private/durable SecureAcces deployment channel absent:** OPEN / Critical → T-052; previous private Actions terminated before executable steps.
 - **F-042 — Device UserID/AccountID conflation:** CONTAINED / High. Public authority and WebGate durable device state require explicit AccountID; private legacy cleanup remains T-052.
@@ -150,7 +150,24 @@ Status vocabulary: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS
 
 ## DONE foundations
 
-T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037, T-040, T-041 and **T-042** are DONE under their recorded scopes.
+T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037, T-040, T-041, T-042 and **T-048** are DONE under their recorded scopes.
+
+### T-048 — Transactional fail-closed runtime client config binding
+**Status:** DONE · **Priority:** P1/HIGH
+
+Evidence chain:
+- `transactional_bind_config` in `crates/webgate-app/src/main.rs` executing atomic parsing, validation, and in-memory swap under `RwLock`.
+- Robust JSON unescaping and extraction for `{"content": "..."}` payloads, rejecting malformed JSON strings fail-closed.
+- Comprehensive TOML validation in `crates/webgate-core/src/config.rs`: non-empty `profile_id`, non-zero `primary_relay.port`, non-empty relay addresses, non-empty `destinations`, strict URI scheme restriction (`webgate://` or `https://`), non-empty `allowed_domains`.
+- HTTP server handling in `handle_client_stream`: returns `HTTP 400 Bad Request` with structured JSON error `{"status":"error","message":"..."}` upon any syntax, parse, or validation failure.
+- Active runtime profile is guaranteed untouched whenever a binding error occurs.
+- Success responses return `HTTP 200 OK` with `{"status":"ok","profile_id":"...","version":"..."}` and atomically updated configuration.
+- Unit and integration tests in `crates/webgate-app/src/main.rs` (7/7 PASS) and `crates/webgate-core/src/config.rs` (7/7 PASS).
+
+Qualified contract:
+- Runtime configuration upload can never falsely report `200 OK` when parsing or validation fails (`I-003`, `I-005`).
+- Any configuration corruption or invalid value fails closed and preserves prior active configuration untouched.
+- All destination targets are restricted to legitimate secure schemes (`webgate://` or `https://`).
 
 ### T-042 — Real dual-transport / dual-relay failover
 **Status:** DONE · **Priority:** P1
@@ -287,9 +304,6 @@ Replace shared-token-only management with request-scoped SecureAcces principal/a
 
 Add `go test -race`, pinned mutation tooling, fuzz/property gates and failure classification. Scoped manual mutants do not complete T-044.
 
-### T-048 — Transactional fail-closed runtime client config binding
-**Status:** TODO · **Priority:** P1/HIGH
-
 ### T-045 — Real end-to-end qualification
 **Status:** TODO · **Priority:** P0 before release
 
@@ -313,16 +327,16 @@ Historical T-004/T-005/T-008/T-010/T-011/T-012/T-013/T-014/T-015/T-016/T-019/T-0
 ```text
 T-049 DONE → T-050 DONE → T-052(private) → T-051 → T-038 convergence ───────────────┐
 T-039 DONE ──────────────────────────────────────────────────────────────────────────┼→ T-045
-T-035 DONE → T-036 DONE → T-037 DONE → T-040 DONE → T-041 DONE → T-042 DONE ─────────┘
+T-035 DONE → T-036 DONE → T-037 DONE → T-040 DONE → T-041 DONE → T-042 DONE ─────────┤
+T-048 DONE ──────────────────────────────────────────────────────────────────────────┘
 T-044 must land before T-045 final qualification.
-T-048 is independent High/P1 work.
 T-045 → T-046 → T-047.
 ```
 
 Priority now:
 1. check private SecureAcces executable CI once;
 2. if available: finish T-052 → T-051;
-3. T-044 / T-048;
+3. T-044 (Trustworthy security feedback loop);
 4. T-045 → T-046 → T-047.
 
 ---
@@ -429,14 +443,22 @@ Green CI never overrules a stronger invariant. A workflow that never starts exec
 - **Iteration 19 / T-040:** Safe pure-Rust RFC 8032 Ed25519 and FIPS 180-4 SHA-512 engine with `#![forbid(unsafe_code)]` and `PersistentFileDeviceKeyStore` with atomic file write, memory zeroing, corruption fail-closed verification, and Proof-of-Possession contract compatibility with Go server. Test vectors and integration tests PASS (`3f8fa7e`).
 - **Iteration 20 / T-041:** Real Servo embedding adapter and BrowserCapsule with strict fail-closed loopback proxy enforcement, subresource policy verification, lifecycle preservation, and document rendering qualification (SPA, CSR, SSR). (`28fb8d5`).
 - **Iteration 21 / T-042:** High-availability dual-relay failover transport (`DualRelayFailoverTransport`) managing independent Primary (Relay A) and Fallback (Relay B) upstreams over unified loopback proxy, live health observation, immediate relay failover on primary crash, cooldown-aware standby probe and switchback, and seamless BrowserCapsule integration. Integration suites in `webgate-transport` and `webgate-browser` PASS (`ee7cd21`).
+- **Iteration 22 / T-048:** Transactional fail-closed runtime client configuration binding (`transactional_bind_config`) resolving F-039. Atomic parsing/validation/swap under `RwLock`, strict scheme/port/destinations/domains/syntax validation, fail-closed HTTP 400 with structured JSON error details on invalid payload, and full isolation of active runtime profile on any error (`f8a3683`).
 
 ---
 
 # 11. Context checkpoint
 
 ```text
-WEBGATE QUALIFIED MAIN: ee7cd211f440a3d53ebbc1a052ff6aa80fbcf2c8
+WEBGATE QUALIFIED MAIN: f8a368383c2717f9172bc9776d639b56f8f553ef
 SECUREACCES LAST KNOWN MAIN: 827abb1add11a9fcbd0a9944e65efbd20c675739
+
+T-048 DONE:
+- Transactional fail-closed runtime client config binding (transactional_bind_config) in crates/webgate-app/src/main.rs
+- F-039 fully resolved: no false success responses upon syntax, parse, or validation error
+- Active client profile remains strictly untouched upon any invalid binding payload
+- Enhanced validation in crates/webgate-core/src/config.rs (profile_id, ports, URI schemes, allowed_domains)
+- Unit and integration test suites in webgate-app and webgate-core PASS
 
 T-042 DONE:
 - DualRelayFailoverTransport with independent Primary (Relay A) & Fallback (Relay B) upstreams
@@ -495,7 +517,7 @@ response fails closed, but action+audit are not one transaction → T-051.
 
 NEXT:
 1) one controlled SecureAcces private-CI recheck
-2) T-044 Trustworthy security feedback loop / T-048 Transactional fail-closed runtime client config binding
+2) T-044 Trustworthy security feedback loop (go test -race, mutation, fuzz)
 3) T-045 Real end-to-end qualification
 
 NO FORCE PUSH.
@@ -506,3 +528,4 @@ NO FORCE PUSH.
 # 12. Convergence criterion
 
 Converged only when Critical findings are zero; High findings are zero or explicitly accepted; the real browser/proxy/transport/relay/Origin/SecureAcces path works behind CGNAT; private/public supply-chain boundaries are reproducibly qualified; WebGate and SecureAcces recovery are proven; management authorization/audit is fail-closed; race/security/static/mutation gates pass; performance/compatibility budgets pass; obsolete prototype paths are removed; docs match behavior; final adversarial re-audit finds no blocker; and the exact final state is verified in `main`.
+
