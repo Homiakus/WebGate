@@ -1,0 +1,45 @@
+name: t080-ui-session-integration
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/t080-ui-session-integration.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, Node 24
+        with:
+          persist-credentials: true
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+      - name: Apply GUI session patch
+        run: python3 scripts/patch_t080_ui.py
+      - name: Source truth contract
+        run: python3 -m unittest scripts.tests.test_client_ui_truth -v
+      - name: Real Chromium session truth qualification
+        run: python3 scripts/test_client_ui_browser.py
+      - name: Rust qualification
+        run: |
+          cargo fmt --all -- --check
+          cargo check -p webgate-app --all-targets --locked
+          cargo test -p webgate-app --locked
+          cargo clippy -p webgate-app --all-targets --locked -- -D warnings
+      - name: Commit qualified GUI session semantics and remove helpers
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/t080-ui-session-integration.yml scripts/patch_t080_ui.py
+          git add crates/webgate-app/src/client_ui_truth_patch.js scripts/tests/test_client_ui_truth.py scripts/test_client_ui_browser.py
+          git commit -m "feat(client): launch GUI through authoritative session endpoint"
+          git push origin HEAD:main
