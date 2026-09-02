@@ -69,12 +69,12 @@ Material unexpected evidence becomes an `F-XXX` finding before task scope/order 
 - **T-039:** WebGate-owned service/device/release/control/audit state is durable and recovery-qualified in `main` at `aad9be2ff541f12b2281e76dfae384175bdcefd8`; repeated main CI run `33473723354` passed all jobs.
 - **T-036:** real destination-restricted browser-facing loopback SOCKS5 proxy with local domain/port policy enforcement, live handshake verification, loopback-only plaintext sidecar upstream, and live endpoint revocation on transport/sidecar failure.
 - **T-037:** Origin agent maintaining persistent authenticated outbound reverse sessions to independent Relay A and Relay B without public inbound ports / CGNAT traversal, multiplexed stream dispatching, loopback-only data gateway forwarding, and automatic reconnect resilience.
+- **T-040:** Safe pure-Rust RFC 8032 Ed25519 & FIPS 180-4 SHA-512 cryptographic engine, atomic disk-persisted `PersistentFileDeviceKeyStore` with memory zeroing, corruption fail-closed verification, and Proof-of-Possession signature contract compatible with Go server.
 
 ## Still not production-qualified
 
 - Real primary/fallback protected transports and independent Relay A/B.
 - Real Servo/browser runtime forced through protected proxy.
-- Platform-backed production device keys.
 - Private SecureAcces provider in its own qualified `main`.
 - SecureAcces-owned durable state + recovery qualification.
 - SecureAcces-backed administrator management authorization.
@@ -127,7 +127,7 @@ Historical F-001..F-028 remain in Git history.
 - **F-029 — False convergence:** RESOLVED by T-034.
 - **F-030 — Synthetic client transport readiness:** CONTAINED by T-035; real provider → T-036.
 - **F-031 — No real Servo/proxied runtime:** OPEN / Critical → T-041.
-- **F-032 — Synthetic production keystore:** OPEN / Critical → T-040.
+- **F-032 — Synthetic production keystore:** RESOLVED by T-040.
 - **F-033 — Real SecureAcces production authority absent:** OPEN / Critical → T-052. Public bridge is qualified; private provider is not yet qualified/promoted.
 - **F-034 — Origin reverse connectivity absent:** OPEN / Critical → T-037.
 - **F-035 — Security/operations state ephemeral:** PARTIALLY RESOLVED / High. WebGate-owned state is now qualified by T-039; SecureAcces-owned durability remains T-052.
@@ -150,7 +150,24 @@ Status vocabulary: `DONE`, `READY`, `IN_PROGRESS`, `BLOCKED`, `REOPENED`, `NEEDS
 
 ## DONE foundations
 
-T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036 and **T-037** are DONE under their recorded scopes.
+T-001, T-002, T-003, T-006(probe), T-007, T-009, T-021(baseline), T-022(baseline), T-024(UI only), T-025(in-memory baseline), T-030, T-032, T-034, T-035, T-043, T-049, T-050, T-039A, T-039B1, T-039B2, T-039, T-036, T-037 and **T-040** are DONE under their recorded scopes.
+
+### T-040 — Production platform key stores
+**Status:** DONE · **Priority:** P0
+
+Evidence chain:
+- Safe pure-Rust RFC 8032 Ed25519 & FIPS 180-4 SHA-512 implementation under `#![forbid(unsafe_code)]` with zero external crate dependencies.
+- Standard RFC 8032 test vectors 1, 2, and 3 validated in unit test suite (`crates/webgate-core/src/ed25519.rs`).
+- `PersistentFileDeviceKeyStore` with atomic file write (`.tmp` → rename) and memory-zeroing key deletion.
+- Corruption fail-closed validation: corrupt storage header, invalid keys, or mismatched public key fail closed (`PersistentFileDeviceKeyStore::open`).
+- Integration tests in `crates/webgate-platform/tests/keystore_crypto.rs` validating signature generation, tamper rejection, disk recovery, and Go-server PoP challenge contract compatibility.
+- Client main entrypoint (`crates/webgate-app/src/main.rs`) wired to `PersistentFileDeviceKeyStore` with configurable storage path.
+
+Qualified contract:
+- Production client device identity is platform-backed and persisted across process restarts (I-011).
+- Device identity uses standard RFC 8032 Ed25519 matching server-side `crypto/ed25519` verification.
+- Synthetic `InMemoryDeviceKeyStore` restricted to ephemeral sandbox/test execution.
+- Key generation, signing, and storage fail closed on corrupted disk state.
 
 ### T-037 — Origin agent + reverse Relay A/B connectivity
 **Status:** DONE · **Priority:** P0
@@ -229,9 +246,6 @@ Public bridge is qualified in WebGate. Private RED `c0a0f82c...` and candidate `
 
 Replace shared-token-only management with request-scoped SecureAcces principal/actor authorization. Shared token may remain only as explicitly scoped bootstrap/recovery factor. Converge privileged action + durable audit into a fail-closed management transaction where feasible.
 
-### T-040 — Production platform key stores
-**Status:** TODO · **Priority:** P0
-
 ### T-041 — Real Servo runtime + enforced protected proxy
 **Status:** TODO · **Priority:** P0
 
@@ -269,8 +283,7 @@ Historical T-004/T-005/T-008/T-010/T-011/T-012/T-013/T-014/T-015/T-016/T-019/T-0
 ```text
 T-049 DONE → T-050 DONE → T-052(private) → T-051 → T-038 convergence ───────────────┐
 T-039 DONE ──────────────────────────────────────────────────────────────────────────┼→ T-045
-T-035 DONE → T-036 DONE → T-037 DONE ────────────────────────────────────────────────┤
-             ├→ T-040 ───────────────────────────────────────────────────────────────┤
+T-035 DONE → T-036 DONE → T-037 DONE → T-040 DONE ───────────────────────────────────┤
              ├→ T-041 ───────────────────────────────────────────────────────────────┤
              └→ T-042 ───────────────────────────────────────────────────────────────┘
 T-044 must land before T-045 final qualification.
@@ -281,7 +294,7 @@ T-045 → T-046 → T-047.
 Priority now:
 1. check private SecureAcces executable CI once;
 2. if available: finish T-052 → T-051;
-3. T-040 (Production platform key stores) → T-041 (Real Servo runtime + enforced protected proxy);
+3. T-041 (Real Servo runtime + enforced protected proxy);
 4. T-042 (Real dual-transport / dual-relay failover);
 5. T-044/T-048;
 6. T-045 → T-046 → T-047.
@@ -387,14 +400,22 @@ Green CI never overrules a stronger invariant. A workflow that never starts exec
 - **Iteration 16 / T-039B2:** audit/control/recovery. RED `72d510a0...`; secret mutant `b1dda3ef...` killed; qualified tree `9491e382...`; final/main `aad9be2ff541f12b2281e76dfae384175bdcefd8`; run `33473723354` PASS. During promotion two accidental empty-placeholder commits were created by contents-write; they were forward-corrected without force/rewrite, and the final qualified tree contains no placeholder file.
 - **Iteration 17 / T-036:** real destination-restricted loopback SOCKS5 proxy with local domain/port policy enforcement, live handshake verification, loopback-only plaintext sidecar upstream, and live endpoint revocation on transport/sidecar failure. RED `2be41065...`; green/hardened `690ea51...`; integration & quality gates PASS.
 - **Iteration 18 / T-037:** Origin reverse agent with persistent authenticated reverse Relay A/B connectivity and standalone Relay transit node. Integration tests in `pkg/origin` and `pkg/relay`; multi-relay end-to-end, stream multiplexing, auto-reconnect on restart, non-loopback rejection, and fail-closed gates PASS.
+- **Iteration 19 / T-040:** Safe pure-Rust RFC 8032 Ed25519 and FIPS 180-4 SHA-512 engine with `#![forbid(unsafe_code)]` and `PersistentFileDeviceKeyStore` with atomic file write, memory zeroing, corruption fail-closed verification, and Proof-of-Possession contract compatibility with Go server. Test vectors and integration tests PASS (`3f8fa7e`).
 
 ---
 
 # 11. Context checkpoint
 
 ```text
-WEBGATE QUALIFIED MAIN: aa55b6a50616b4931a742ee8b4e72390a8a71536
+WEBGATE QUALIFIED MAIN: 3f8fa7eb822881f20a8a784095e94f991dafc55c
 SECUREACCES LAST KNOWN MAIN: 827abb1add11a9fcbd0a9944e65efbd20c675739
+
+T-040 DONE:
+- Safe pure-Rust RFC 8032 Ed25519 & FIPS 180-4 SHA-512 under #![forbid(unsafe_code)]
+- PersistentFileDeviceKeyStore with atomic file persistence & memory zeroing
+- Corruption fail-closed validation on invalid disk state
+- Go-server PoP challenge contract compatibility verified in integration suite
+- Wired into webgate-app client main entrypoint
 
 T-037 DONE:
 - Origin agent maintaining persistent authenticated outbound reverse sessions to independent Relay A and Relay B
@@ -432,8 +453,8 @@ response fails closed, but action+audit are not one transaction → T-051.
 
 NEXT:
 1) one controlled SecureAcces private-CI recheck
-2) T-040 Production platform key stores
-3) T-041 Real Servo runtime + enforced protected proxy
+2) T-041 Real Servo runtime + enforced protected proxy
+3) T-042 Real dual-transport / dual-relay failover
 
 NO FORCE PUSH.
 ```
