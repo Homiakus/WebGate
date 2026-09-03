@@ -62,3 +62,39 @@ for old, new in replacements.items():
     text = text.replace(old, new, 1)
 
 path.write_text(text)
+
+lib_path = Path('crates/webgate-transport/src/lib.rs')
+lib = lib_path.read_text()
+old = '''    #[test]
+    fn http_connect_endpoint_is_typed_and_loopback_only() {
+        let address = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let endpoint = HttpConnectProxyEndpoint::new(address, 43120).unwrap();
+        assert_eq!(endpoint.socket_addr(), SocketAddr::new(address, 43120));
+        assert_eq!(endpoint.proxy_uri(), "http://127.0.0.1:43120");
+        assert_eq!(
+            HttpConnectProxyEndpoint::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 8)), 43120),
+            Err(EndpointError::NotLoopback)
+        );
+    }
+'''
+new = '''    #[test]
+    fn http_connect_endpoint_is_typed_and_loopback_only() {
+        let address = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let result = HttpConnectProxyEndpoint::new(address, 43120)
+            .map(|endpoint| (endpoint.socket_addr(), endpoint.proxy_uri()));
+        assert_eq!(
+            result,
+            Ok((
+                SocketAddr::new(address, 43120),
+                "http://127.0.0.1:43120".to_string()
+            ))
+        );
+        assert_eq!(
+            HttpConnectProxyEndpoint::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 8)), 43120),
+            Err(EndpointError::NotLoopback)
+        );
+    }
+'''
+count = lib.count(old)
+assert count == 1, count
+lib_path.write_text(lib.replace(old, new, 1))
