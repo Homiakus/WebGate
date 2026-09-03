@@ -25,8 +25,8 @@ jobs:
           rustup default stable
       - name: Apply Servo feature probe
         run: python3 scripts/patch_t041r_servo06_probe.py
-      - name: Resolve exact Servo 0.5 lock
-        run: cargo update -p servo --precise 0.5.0
+      - name: Resolve and compile exact Servo 0.5 feature
+        run: cargo check -p webgate-browser --features servo-runtime
       - name: Format
         run: cargo fmt --all -- --check
       - name: Architecture boundaries
