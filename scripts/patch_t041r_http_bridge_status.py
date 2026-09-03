@@ -79,30 +79,31 @@ replacement2 = '''    #[must_use]
 assert text.count(anchor2) == 1
 text = text.replace(anchor2, replacement2, 1)
 
-# Add regression test immediately before unavailable_upstream test if present.
 needle = '''    #[test]
     fn unavailable_upstream_never_exposes_ready_endpoint() {'''
 regression = '''    #[test]
     fn live_status_revokes_http_endpoint_after_owner_stop() {
-        let (upstream, _observed, sidecar) = spawn_recording_socks5_sidecar();
-        let upstream_endpoint = LocalProxyEndpoint::new(upstream.ip(), upstream.port()).unwrap();
-        let mut bridge = RestrictedHttpConnectTransport::new(config(
-            upstream_endpoint,
-            vec!["app.internal"],
-            vec![443],
-        ))
-        .unwrap();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let upstream_port = listener.local_addr().unwrap().port();
+        let sidecar = thread::spawn(move || {
+            let (mut probe, _) = listener.accept().unwrap();
+            let mut greeting = [0_u8; 3];
+            probe.read_exact(&mut greeting).unwrap();
+            assert_eq!(greeting, [0x05, 0x01, 0x00]);
+            probe.write_all(&[0x05, 0x00]).unwrap();
+        });
+
+        let mut bridge = RestrictedHttpConnectTransport::new(base_config(upstream_port)).unwrap();
         let endpoint = bridge.start_proxy().unwrap();
+        sidecar.join().unwrap();
         let status = bridge.status_handle().unwrap();
-        let (state, live_endpoint) = status.snapshot();
-        assert_eq!(state, TransportState::Ready);
-        assert_eq!(live_endpoint, Some(endpoint));
+        assert_eq!(
+            status.snapshot(),
+            (TransportState::Ready, Some(endpoint))
+        );
 
         bridge.stop();
-        let (stopped_state, stopped_endpoint) = status.snapshot();
-        assert_eq!(stopped_state, TransportState::Stopped);
-        assert_eq!(stopped_endpoint, None);
-        sidecar.join().unwrap();
+        assert_eq!(status.snapshot(), (TransportState::Stopped, None));
     }
 
 ''' + needle
