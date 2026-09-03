@@ -1,7 +1,4 @@
-#!/usr/bin/env python3
-from pathlib import Path
-
-module = r'''#![forbid(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use crate::socks5_proto::{
     DestinationPolicy, PolicyValidationError, STATE_OFFLINE, STATE_STOPPED, STREAM_POLL_TIMEOUT,
@@ -105,11 +102,12 @@ impl RestrictedHttpConnectTransport {
         })
     }
 
-    pub fn start_proxy(
-        &mut self,
-    ) -> Result<HttpConnectProxyEndpoint, RestrictedHttpConnectError> {
+    pub fn start_proxy(&mut self) -> Result<HttpConnectProxyEndpoint, RestrictedHttpConnectError> {
         if self.listener_handle.is_some()
-            || matches!(self.state(), TransportState::Starting | TransportState::Ready)
+            || matches!(
+                self.state(),
+                TransportState::Starting | TransportState::Ready
+            )
         {
             return Err(RestrictedHttpConnectError::AlreadyStarted);
         }
@@ -147,41 +145,43 @@ impl RestrictedHttpConnectTransport {
         let timeout = self.config.connect_timeout;
         let max_header_bytes = self.config.max_header_bytes;
 
-        let handle = thread::spawn(move || loop {
-            match listener.accept() {
-                Ok((stream, _)) => {
-                    if shutdown.load(Ordering::Acquire) {
-                        break;
-                    }
-                    let worker_shutdown = Arc::clone(&shutdown);
-                    let worker_state = Arc::clone(&state);
-                    let worker_policy = policy.clone();
-                    let worker = thread::spawn(move || {
-                        let _ = handle_client(
-                            stream,
-                            upstream,
-                            timeout,
-                            max_header_bytes,
-                            &worker_policy,
-                            &worker_shutdown,
-                            &worker_state,
-                        );
-                    });
-                    match workers.lock() {
-                        Ok(mut handles) => handles.push(worker),
-                        Err(poisoned) => {
-                            state.store(STATE_OFFLINE, Ordering::Release);
-                            let mut handles = poisoned.into_inner();
-                            handles.push(worker);
+        let handle = thread::spawn(move || {
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        if shutdown.load(Ordering::Acquire) {
                             break;
                         }
+                        let worker_shutdown = Arc::clone(&shutdown);
+                        let worker_state = Arc::clone(&state);
+                        let worker_policy = policy.clone();
+                        let worker = thread::spawn(move || {
+                            let _ = handle_client(
+                                stream,
+                                upstream,
+                                timeout,
+                                max_header_bytes,
+                                &worker_policy,
+                                &worker_shutdown,
+                                &worker_state,
+                            );
+                        });
+                        match workers.lock() {
+                            Ok(mut handles) => handles.push(worker),
+                            Err(poisoned) => {
+                                state.store(STATE_OFFLINE, Ordering::Release);
+                                let mut handles = poisoned.into_inner();
+                                handles.push(worker);
+                                break;
+                            }
+                        }
                     }
-                }
-                Err(_) => {
-                    if !shutdown.load(Ordering::Acquire) {
-                        state.store(STATE_OFFLINE, Ordering::Release);
+                    Err(_) => {
+                        if !shutdown.load(Ordering::Acquire) {
+                            state.store(STATE_OFFLINE, Ordering::Release);
+                        }
+                        break;
                     }
-                    break;
                 }
             }
         });
@@ -199,7 +199,10 @@ impl RestrictedHttpConnectTransport {
 
     #[must_use]
     pub fn local_proxy(&self) -> Option<HttpConnectProxyEndpoint> {
-        if matches!(self.state(), TransportState::Ready | TransportState::Degraded) {
+        if matches!(
+            self.state(),
+            TransportState::Ready | TransportState::Degraded
+        ) {
             self.local_endpoint
         } else {
             None
@@ -366,7 +369,10 @@ fn read_http_head(
 }
 
 fn find_header_end(bytes: &[u8]) -> Option<usize> {
-    bytes.windows(4).position(|window| window == b"\r\n\r\n").map(|index| index + 4)
+    bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| index + 4)
 }
 
 fn parse_connect_request(head: &[u8]) -> Result<(SocksTarget, u16), RequestError> {
@@ -413,7 +419,9 @@ fn parse_authority(authority: &str) -> Result<(SocksTarget, u16), RequestError> 
         (host, port)
     };
 
-    let port = port_text.parse::<u16>().map_err(|_| RequestError::Malformed)?;
+    let port = port_text
+        .parse::<u16>()
+        .map_err(|_| RequestError::Malformed)?;
     if port == 0 {
         return Err(RequestError::Malformed);
     }
@@ -480,7 +488,8 @@ mod tests {
             let mut port_bytes = [0_u8; 2];
             stream.read_exact(&mut port_bytes).unwrap();
             let target_port = u16::from_be_bytes(port_bytes);
-            tx.send((String::from_utf8(domain).unwrap(), target_port)).unwrap();
+            tx.send((String::from_utf8(domain).unwrap(), target_port))
+                .unwrap();
             stream
                 .write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 1])
                 .unwrap();
@@ -512,18 +521,18 @@ mod tests {
 
     #[test]
     fn parser_rejects_non_connect_malformed_authority_and_obs_fold() {
-        assert_eq!(
+        assert!(matches!(
             parse_connect_request(b"GET https://app.internal/ HTTP/1.1\r\n\r\n"),
             Err(RequestError::MethodNotAllowed)
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             parse_connect_request(b"CONNECT user@app.internal:443 HTTP/1.1\r\n\r\n"),
             Err(RequestError::Malformed)
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             parse_connect_request(b"CONNECT app.internal:443 HTTP/1.1\r\n folded\r\n\r\n"),
             Err(RequestError::Malformed)
-        );
+        ));
     }
 
     #[test]
@@ -558,7 +567,10 @@ mod tests {
         let mut pong = [0_u8; 4];
         client.read_exact(&mut pong).unwrap();
         assert_eq!(&pong, b"pong");
-        assert_eq!(observed.recv_timeout(Duration::from_secs(1)).unwrap(), ("app.internal".to_string(), 443));
+        assert_eq!(
+            observed.recv_timeout(Duration::from_secs(1)).unwrap(),
+            ("app.internal".to_string(), 443)
+        );
 
         bridge.stop();
         assert_eq!(bridge.state(), TransportState::Stopped);
@@ -576,20 +588,23 @@ mod tests {
         denied
             .write_all(b"CONNECT evil.internal:443 HTTP/1.1\r\nHost: evil.internal\r\n\r\n")
             .unwrap();
-        let mut denied_response = [0_u8; 64];
-        let count = denied.read(&mut denied_response).unwrap();
-        assert!(std::str::from_utf8(&denied_response[..count]).unwrap().contains("403 Forbidden"));
+        let mut denied_response = String::new();
+        denied.read_to_string(&mut denied_response).unwrap();
+        assert!(denied_response.starts_with("HTTP/1.1 403 Forbidden"));
         assert_eq!(bridge.state(), TransportState::Ready);
 
         let mut malformed = TcpStream::connect(endpoint.socket_addr()).unwrap();
         malformed.write_all(b"GET / HTTP/1.1\r\n\r\n").unwrap();
-        let count = malformed.read(&mut denied_response).unwrap();
-        assert!(std::str::from_utf8(&denied_response[..count]).unwrap().contains("405 Method Not Allowed"));
+        let mut malformed_response = String::new();
+        malformed.read_to_string(&mut malformed_response).unwrap();
+        assert!(malformed_response.starts_with("HTTP/1.1 405 Method Not Allowed"));
         assert_eq!(bridge.state(), TransportState::Ready);
 
         // Complete the mock's second expected connection so the helper thread can exit.
         let mut allowed = TcpStream::connect(endpoint.socket_addr()).unwrap();
-        allowed.write_all(b"CONNECT app.internal:443 HTTP/1.1\r\n\r\nping").unwrap();
+        allowed
+            .write_all(b"CONNECT app.internal:443 HTTP/1.1\r\n\r\nping")
+            .unwrap();
         let mut all = Vec::new();
         allowed.read_to_end(&mut all).unwrap();
         assert!(all.windows(4).any(|window| window == b"pong"));
@@ -612,85 +627,3 @@ mod tests {
         assert!(bridge.local_proxy().is_none());
     }
 }
-'''
-
-Path('crates/webgate-transport/src/restricted_http_connect.rs').write_text(module)
-
-lib_path = Path('crates/webgate-transport/src/lib.rs')
-text = lib_path.read_text()
-old = 'pub mod relay;\npub mod restricted_socks5;\npub(crate) mod socks5_proto;\n'
-new = 'pub mod relay;\npub mod restricted_http_connect;\npub mod restricted_socks5;\npub(crate) mod socks5_proto;\n'
-assert text.count(old) == 1
-text = text.replace(old, new, 1)
-
-anchor = '''impl LocalProxyEndpoint {
-    pub fn new(address: IpAddr, port: u16) -> Result<Self, EndpointError> {
-        if !address.is_loopback() {
-            return Err(EndpointError::NotLoopback);
-        }
-        if port == 0 {
-            return Err(EndpointError::UnboundPort);
-        }
-        Ok(Self(SocketAddr::new(address, port)))
-    }
-
-    #[must_use]
-    pub const fn socket_addr(self) -> SocketAddr {
-        self.0
-    }
-}
-'''
-addition = anchor + '''
-/// Loopback-only HTTP CONNECT endpoint intended for renderer proxy configuration.
-/// Kept distinct from `LocalProxyEndpoint` so SOCKS5 and HTTP proxy protocols
-/// cannot be accidentally interchanged at the browser boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HttpConnectProxyEndpoint(SocketAddr);
-
-impl HttpConnectProxyEndpoint {
-    pub fn new(address: IpAddr, port: u16) -> Result<Self, EndpointError> {
-        if !address.is_loopback() {
-            return Err(EndpointError::NotLoopback);
-        }
-        if port == 0 {
-            return Err(EndpointError::UnboundPort);
-        }
-        Ok(Self(SocketAddr::new(address, port)))
-    }
-
-    #[must_use]
-    pub const fn socket_addr(self) -> SocketAddr {
-        self.0
-    }
-
-    #[must_use]
-    pub fn proxy_uri(self) -> String {
-        format!("http://{}", self.0)
-    }
-}
-'''
-assert text.count(anchor) == 1
-text = text.replace(anchor, addition, 1)
-
-text = text.replace(
-    '    use super::{EndpointError, LocalProxyEndpoint};',
-    '    use super::{EndpointError, HttpConnectProxyEndpoint, LocalProxyEndpoint};',
-    1,
-)
-insert_test = '''
-    #[test]
-    fn http_connect_endpoint_is_typed_and_loopback_only() {
-        let address = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let endpoint = HttpConnectProxyEndpoint::new(address, 43120).unwrap();
-        assert_eq!(endpoint.socket_addr(), SocketAddr::new(address, 43120));
-        assert_eq!(endpoint.proxy_uri(), "http://127.0.0.1:43120");
-        assert_eq!(
-            HttpConnectProxyEndpoint::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 8)), 43120),
-            Err(EndpointError::NotLoopback)
-        );
-    }
-'''
-marker = '\n    #[test]\n    fn endpoint_rejects_zero_port() {'
-assert text.count(marker) == 1
-text = text.replace(marker, insert_test + marker, 1)
-lib_path.write_text(text)

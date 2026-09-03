@@ -3,6 +3,7 @@
 pub mod dual_failover;
 pub mod failover;
 pub mod relay;
+pub mod restricted_http_connect;
 pub mod restricted_socks5;
 pub(crate) mod socks5_proto;
 
@@ -36,6 +37,34 @@ impl LocalProxyEndpoint {
     }
 }
 
+/// Loopback-only HTTP CONNECT endpoint intended for renderer proxy configuration.
+/// Kept distinct from `LocalProxyEndpoint` so SOCKS5 and HTTP proxy protocols
+/// cannot be accidentally interchanged at the browser boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HttpConnectProxyEndpoint(SocketAddr);
+
+impl HttpConnectProxyEndpoint {
+    pub fn new(address: IpAddr, port: u16) -> Result<Self, EndpointError> {
+        if !address.is_loopback() {
+            return Err(EndpointError::NotLoopback);
+        }
+        if port == 0 {
+            return Err(EndpointError::UnboundPort);
+        }
+        Ok(Self(SocketAddr::new(address, port)))
+    }
+
+    #[must_use]
+    pub const fn socket_addr(self) -> SocketAddr {
+        self.0
+    }
+
+    #[must_use]
+    pub fn proxy_uri(self) -> String {
+        format!("http://{}", self.0)
+    }
+}
+
 /// High-level transport state; detailed failover policy is introduced later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportState {
@@ -56,7 +85,7 @@ pub trait TransportProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::{EndpointError, LocalProxyEndpoint};
+    use super::{EndpointError, HttpConnectProxyEndpoint, LocalProxyEndpoint};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
     #[test]
@@ -79,6 +108,24 @@ mod tests {
     fn endpoint_rejects_non_loopback_address() {
         let result = LocalProxyEndpoint::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7)), 43119);
         assert_eq!(result, Err(EndpointError::NotLoopback));
+    }
+
+    #[test]
+    fn http_connect_endpoint_is_typed_and_loopback_only() {
+        let address = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let result = HttpConnectProxyEndpoint::new(address, 43120)
+            .map(|endpoint| (endpoint.socket_addr(), endpoint.proxy_uri()));
+        assert_eq!(
+            result,
+            Ok((
+                SocketAddr::new(address, 43120),
+                "http://127.0.0.1:43120".to_string()
+            ))
+        );
+        assert_eq!(
+            HttpConnectProxyEndpoint::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 8)), 43120),
+            Err(EndpointError::NotLoopback)
+        );
     }
 
     #[test]
