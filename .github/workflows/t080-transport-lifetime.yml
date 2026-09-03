@@ -24,7 +24,9 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
       - name: Apply transport lifetime patch
-        run: python3 scripts/patch_t080_transport_lifetime.py
+        run: |
+          python3 scripts/patch_t080_transport_lifetime.py
+          python3 scripts/fix_t080_transport_lifetime.py
       - name: Format
         run: cargo fmt --all
       - name: Verify client lifetime contract
@@ -36,7 +38,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/t080-transport-lifetime.yml scripts/patch_t080_transport_lifetime.py
+          git rm .github/workflows/t080-transport-lifetime.yml scripts/patch_t080_transport_lifetime.py scripts/fix_t080_transport_lifetime.py
           git add crates/webgate-app/src/main.rs
           git commit -m "fix(client): retain live transport owner and status"
           git push origin HEAD:main
+# rerun: direct unit callers adapted and start-error causes are consumed by Display
