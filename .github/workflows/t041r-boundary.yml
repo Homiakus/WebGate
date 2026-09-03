@@ -41,3 +41,4 @@ jobs:
           git add crates/webgate-browser/src/adapter.rs crates/webgate-browser/src/capsule.rs crates/webgate-app/src/session.rs
           git commit -m "refactor(browser): separate contract adapter from renderer proof"
           git push origin HEAD:main
+# rerun: stale assertion fixed; production Open remains proof-gated
