@@ -40,3 +40,4 @@ jobs:
           git add crates/webgate-transport/src/restricted_http_connect.rs
           git commit -m "feat(transport): expose live HTTP bridge status"
           git push origin HEAD:main
+# rerun: status regression uses a probe-only SOCKS5 sidecar
