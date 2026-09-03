@@ -119,7 +119,7 @@ impl ApplicationSessionManager {
     ///
     /// Current behavior is intentionally fail-closed at renderer qualification:
     /// BrowserCapsule may validate proxy/policy and accept the navigation intent,
-    /// but the current ServoEmbeddingAdapter does not yet prove a real renderer
+    /// but the current ServoContractAdapter does not yet prove a real renderer
     /// instance or committed page navigation. Therefore this method cannot return
     /// `Open` until that proof is implemented and requalified.
     pub fn open_application(
@@ -224,16 +224,25 @@ impl ApplicationSessionManager {
             );
         }
 
-        // IMPORTANT: current ServoEmbeddingAdapter is a contract stub. Its
-        // initialize/load_url methods do not yet own a real Servo engine/webview
-        // or provide a renderer/navigation-commit proof. Retain the capsule for
-        // lifecycle ownership, but never claim Open.
-        transitions.push(ApplicationSessionState::RendererUnqualified);
+        let renderer_proof = capsule.renderer_qualification();
+        let (state, message) = if renderer_proof.qualifies_open() {
+            transitions.push(ApplicationSessionState::Open);
+            (
+                ApplicationSessionState::Open,
+                "protected renderer produced qualified URL/load/frame evidence".to_string(),
+            )
+        } else {
+            transitions.push(ApplicationSessionState::RendererUnqualified);
+            (
+                ApplicationSessionState::RendererUnqualified,
+                "BrowserCapsule accepted proxy and navigation intent, but the renderer did not produce production-qualified engine/WebView/URL/load/frame evidence; protected Open is blocked".to_string(),
+            )
+        };
         let snapshot = ApplicationSessionSnapshot {
             session_id: session_id.clone(),
             target_url,
-            state: ApplicationSessionState::RendererUnqualified,
-            message: "BrowserCapsule accepted proxy and navigation intent, but the embedded renderer is not production-qualified; protected Open is blocked".to_string(),
+            state,
+            message,
             transitions,
         };
         self.sessions.insert(
@@ -336,7 +345,11 @@ mod tests {
             ]
         );
         assert_ne!(result.state, ApplicationSessionState::Open);
-        assert!(result.message.contains("not production-qualified"));
+        assert!(
+            result
+                .message
+                .contains("production-qualified engine/WebView/URL/load/frame evidence")
+        );
     }
 
     #[test]

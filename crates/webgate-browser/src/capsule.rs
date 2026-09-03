@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
-use crate::adapter::{ServoEmbeddingAdapter, ServoEmbeddingConfig};
+use crate::adapter::{
+    RendererQualificationEvidence, RendererQualificationSnapshot, ServoContractAdapter,
+    ServoEmbeddingConfig,
+};
 use crate::{BrowserConfig, BrowserKind, BrowserLifecycleEvent, BrowserState, ProtectedBrowser};
 use std::net::SocketAddr;
 use webgate_core::Platform;
@@ -46,7 +49,7 @@ pub struct BrowserCapsule {
     navigation_policy: NavigationPolicy,
     current_url: Option<ValidatedUrl>,
     cache_purged: bool,
-    adapter: Option<ServoEmbeddingAdapter>,
+    adapter: Option<ServoContractAdapter>,
 }
 
 impl BrowserCapsule {
@@ -84,8 +87,19 @@ impl BrowserCapsule {
     }
 
     #[must_use]
-    pub fn adapter(&self) -> Option<&ServoEmbeddingAdapter> {
+    pub fn adapter(&self) -> Option<&ServoContractAdapter> {
         self.adapter.as_ref()
+    }
+
+    /// Returns renderer-observed proof. Contract-only adapters intentionally
+    /// return an unqualified snapshot even when BrowserCapsule policy/proxy setup
+    /// itself is ready.
+    #[must_use]
+    pub fn renderer_qualification(&self) -> RendererQualificationSnapshot {
+        self.adapter
+            .as_ref()
+            .map(RendererQualificationEvidence::qualification_snapshot)
+            .unwrap_or_default()
     }
 
     /// Attaches the mandatory loopback proxy. All outbound traffic MUST flow through it.
@@ -104,7 +118,7 @@ impl BrowserCapsule {
 
         let browser_cfg = BrowserConfig::new(Platform::current());
         let servo_cfg = ServoEmbeddingConfig::new(browser_cfg).with_proxy(proxy.proxy_endpoint);
-        let mut adapter = ServoEmbeddingAdapter::new(servo_cfg);
+        let mut adapter = ServoContractAdapter::new(servo_cfg);
 
         if let Err(e) = adapter.initialize() {
             self.state = BrowserState::Failed;
@@ -250,6 +264,7 @@ mod tests {
         assert_eq!(capsule.start(), Ok(()));
         assert_eq!(capsule.state(), BrowserState::Ready);
         assert!(capsule.adapter().is_some());
+        assert!(!capsule.renderer_qualification().qualifies_open());
     }
 
     #[test]
