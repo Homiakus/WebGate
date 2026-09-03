@@ -42,4 +42,4 @@ jobs:
           git add crates/webgate-transport/src/lib.rs crates/webgate-transport/src/restricted_http_connect.rs
           git commit -m "feat(transport): add restricted HTTP CONNECT browser bridge"
           git push origin HEAD:main
-# rerun: escaped CRLF fixer now uses raw literals
+# rerun: parser tests are Result-type-safe and HTTP assertions are TCP-framing-safe
