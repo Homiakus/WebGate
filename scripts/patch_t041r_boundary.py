@@ -219,4 +219,11 @@ new_final = '''        let renderer_proof = capsule.renderer_qualification();
 count = s.count(old_final)
 assert count == 1, count
 s = s.replace(old_final, new_final, 1)
+
+old_assert = '        assert!(result.message.contains("not production-qualified"));\n'
+new_assert = '        assert!(result.message.contains("production-qualified engine/WebView/URL/load/frame evidence"));\n'
+count = s.count(old_assert)
+assert count == 1, count
+s = s.replace(old_assert, new_assert, 1)
+
 session_path.write_text(s)
