@@ -18,11 +18,12 @@ use webgate_core::config::{ClientConfigProfile, ConfigError, RelayEndpointConfig
 use webgate_platform::current_platform;
 use webgate_platform::keystore::{DeviceKeyStore, PersistentFileDeviceKeyStore};
 use webgate_transport::dual_failover::{
-    DualRelayConfig, DualRelayError, DualRelayFailoverTransport,
+    DualRelayConfig, DualRelayError, DualRelayFailoverTransport, DualRelayStatusHandle,
 };
 use webgate_transport::failover::FailoverConfig;
 use webgate_transport::restricted_socks5::{
-    RestrictedProxyError, RestrictedSocks5Config, RestrictedSocks5Transport,
+    RestrictedProxyError, RestrictedProxyStatusHandle, RestrictedSocks5Config,
+    RestrictedSocks5Transport,
 };
 use webgate_transport::{LocalProxyEndpoint, TransportProvider, TransportState};
 
@@ -67,6 +68,115 @@ fn build_dual_relay_transport(
         connect_timeout: PRIMARY_PROXY_CONNECT_TIMEOUT,
         failover_config: FailoverConfig::default(),
     })
+}
+
+/// Owns the running transport listener/workers for exactly as long as the client
+/// process needs the protected endpoint. Dropping this value revokes the endpoint.
+#[derive(Debug)]
+enum ClientTransportOwner {
+    Primary(RestrictedSocks5Transport),
+    Dual(DualRelayFailoverTransport),
+}
+
+impl ClientTransportOwner {
+    #[must_use]
+    fn state(&self) -> TransportState {
+        match self {
+            Self::Primary(transport) => transport.state(),
+            Self::Dual(transport) => transport.state(),
+        }
+    }
+}
+
+/// Live transport truth source used by GUI, CLI and the session orchestrator.
+/// A fixed snapshot is permitted only for fail-closed bootstrap failure/tests;
+/// successful transports always use a live status handle tied to the owner state.
+#[derive(Debug, Clone)]
+enum ClientTransportStatus {
+    Primary(RestrictedProxyStatusHandle),
+    Dual(DualRelayStatusHandle),
+    Fixed {
+        state: TransportState,
+        endpoint: Option<LocalProxyEndpoint>,
+    },
+}
+
+impl ClientTransportStatus {
+    #[must_use]
+    fn snapshot(&self) -> (TransportState, Option<LocalProxyEndpoint>) {
+        match self {
+            Self::Primary(status) => status.snapshot(),
+            Self::Dual(status) => {
+                let (state, _role, endpoint, _primary_health, _fallback_health) = status.snapshot();
+                (state, endpoint)
+            }
+            Self::Fixed { state, endpoint } => (*state, *endpoint),
+        }
+    }
+
+    #[must_use]
+    const fn offline() -> Self {
+        Self::Fixed {
+            state: TransportState::Offline,
+            endpoint: None,
+        }
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    const fn fixed(state: TransportState, endpoint: Option<LocalProxyEndpoint>) -> Self {
+        Self::Fixed { state, endpoint }
+    }
+}
+
+#[derive(Debug)]
+enum ClientTransportStartError {
+    Primary(RestrictedProxyError),
+    Dual(DualRelayError),
+    StatusHandleUnavailable,
+}
+
+impl std::fmt::Display for ClientTransportStartError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Primary(error) => write!(formatter, "primary transport: {error:?}"),
+            Self::Dual(error) => write!(formatter, "dual transport: {error:?}"),
+            Self::StatusHandleUnavailable => formatter.write_str("live status handle unavailable"),
+        }
+    }
+}
+
+fn start_client_transport(
+    profile: &ClientConfigProfile,
+) -> Result<(ClientTransportOwner, ClientTransportStatus), ClientTransportStartError> {
+    if let Some(fallback) = &profile.fallback_relay {
+        let mut transport = build_dual_relay_transport(profile, fallback)
+            .map_err(ClientTransportStartError::Dual)?;
+        transport
+            .start_proxy()
+            .map_err(ClientTransportStartError::Dual)?;
+        let status = transport
+            .status_handle()
+            .ok_or(ClientTransportStartError::StatusHandleUnavailable)?;
+        let owner = ClientTransportOwner::Dual(transport);
+        debug_assert!(matches!(
+            owner.state(),
+            TransportState::Ready | TransportState::Degraded
+        ));
+        Ok((owner, ClientTransportStatus::Dual(status)))
+    } else {
+        let mut transport =
+            build_primary_transport(profile).map_err(ClientTransportStartError::Primary)?;
+        transport
+            .start_proxy()
+            .map_err(ClientTransportStartError::Primary)?;
+        let status = transport
+            .status_handle()
+            .ok_or(ClientTransportStartError::StatusHandleUnavailable)?;
+        let owner = ClientTransportOwner::Primary(transport);
+        debug_assert_eq!(owner.state(), TransportState::Ready);
+        Ok((owner, ClientTransportStatus::Primary(status)))
+    }
 }
 
 const fn transport_state_label(state: TransportState) -> &'static str {
@@ -249,8 +359,7 @@ fn handle_client_stream(
     profile_arc: &Arc<RwLock<ClientConfigProfile>>,
     session_manager: &Arc<Mutex<ApplicationSessionManager>>,
     keystore_id: &str,
-    transport_state: TransportState,
-    protected_proxy: Option<LocalProxyEndpoint>,
+    transport_status: &ClientTransportStatus,
 ) {
     let mut buf = [0u8; 8192];
     let bytes_read = match stream.read(&mut buf) {
@@ -270,6 +379,9 @@ fn handle_client_stream(
     }
     let method = parts[0];
     let path = parts[1];
+    // Never trust bootstrap-time readiness. Every request observes the current
+    // transport state and endpoint from the live status handle.
+    let (transport_state, protected_proxy) = transport_status.snapshot();
 
     if method == "GET" && (path == "/" || path == "/index.html") {
         let body = client_ui_document();
@@ -701,41 +813,19 @@ fn main() {
         }
     };
 
-    let (transport_state, proxy_ep) = if let Some(ref fallback) = profile.fallback_relay {
-        match build_dual_relay_transport(&profile, fallback) {
-            Ok(mut dual_transport) => {
-                let ep = dual_transport.start_proxy().ok();
-                let state = dual_transport.state();
-                if ep.is_none() {
-                    eprintln!(
-                        "[Транспорт] Dual-relay upstreams не подтверждены; protected proxy остаётся OFFLINE."
-                    );
-                }
-                (state, ep)
-            }
-            Err(error) => {
-                eprintln!("[Транспорт] Некорректная конфигурация dual relay: {error:?}");
-                (TransportState::Offline, None)
-            }
-        }
-    } else {
-        match build_primary_transport(&profile) {
-            Ok(mut primary) => {
-                let ep = primary.start_proxy().ok();
-                let state = primary.state();
-                if ep.is_none() {
-                    eprintln!(
-                        "[Транспорт] Primary sidecar не подтверждён; protected proxy остаётся OFFLINE."
-                    );
-                }
-                (state, ep)
-            }
-            Err(error) => {
-                eprintln!("[Транспорт] Некорректная политика primary proxy: {error:?}");
-                (TransportState::Offline, None)
-            }
+    // The owner is intentionally retained for the whole client lifetime. In the
+    // previous implementation it was dropped inside this bootstrap expression,
+    // which immediately stopped the listener while leaving a copied Ready state.
+    let (_transport_owner, transport_status) = match start_client_transport(&profile) {
+        Ok((owner, status)) => (Some(owner), status),
+        Err(error) => {
+            eprintln!(
+                "[Транспорт] Protected transport failed to start and remains OFFLINE: {error}"
+            );
+            (None, ClientTransportStatus::offline())
         }
     };
+    let (transport_state, proxy_ep) = transport_status.snapshot();
 
     if cli_only {
         print_editorial_banner(&profile, &target_destination, &device_id);
@@ -758,11 +848,12 @@ fn main() {
         if gate.verify_request(&nav_req).is_ok() {
             println!("  [Брокер IPC] Запрос авторизован с привилегией: NavigateService");
             let mut session_manager = ApplicationSessionManager::new();
+            let (live_transport_state, live_proxy_ep) = transport_status.snapshot();
             let snapshot = session_manager.open_application(
                 &profile,
                 &target_destination,
-                transport_state,
-                proxy_ep,
+                live_transport_state,
+                live_proxy_ep,
             );
             println!(
                 "  [Сессия {}] {}: {}",
@@ -815,6 +906,7 @@ fn main() {
     let profile_clone = Arc::clone(&profile_arc);
     let session_manager = Arc::new(Mutex::new(ApplicationSessionManager::new()));
     let session_manager_clone = Arc::clone(&session_manager);
+    let transport_status_clone = transport_status.clone();
     let dev_id_clone = device_id.clone();
 
     let server_handle = thread::spawn(move || {
@@ -824,8 +916,7 @@ fn main() {
                 &profile_clone,
                 &session_manager_clone,
                 &dev_id_clone,
-                transport_state,
-                proxy_ep,
+                &transport_status_clone,
             );
         }
     });
@@ -851,6 +942,7 @@ mod tests {
         let profile_clone = Arc::clone(&profile_arc);
         let session_manager = Arc::new(Mutex::new(ApplicationSessionManager::new()));
         let session_manager_clone = Arc::clone(&session_manager);
+        let transport_status = ClientTransportStatus::fixed(transport_state, proxy);
         let request = request.to_string();
 
         let server_thread = thread::spawn(move || {
@@ -860,8 +952,7 @@ mod tests {
                 &profile_clone,
                 &session_manager_clone,
                 "dev_test_123",
-                transport_state,
-                proxy,
+                &transport_status,
             );
         });
 
@@ -871,6 +962,50 @@ mod tests {
         client.read_to_string(&mut response).unwrap();
         server_thread.join().unwrap();
         response
+    }
+
+    fn spawn_probe_only_socks5_sidecar() -> (u16, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut greeting = [0_u8; 3];
+            stream.read_exact(&mut greeting).unwrap();
+            assert_eq!(greeting, [0x05, 0x01, 0x00]);
+            stream.write_all(&[0x05, 0x00]).unwrap();
+        });
+        (port, handle)
+    }
+
+    #[test]
+    fn started_client_transport_owner_keeps_proxy_live_until_drop() {
+        let (upstream_port, sidecar) = spawn_probe_only_socks5_sidecar();
+        let mut profile = ClientConfigProfile::default();
+        profile.primary_relay.address = "127.0.0.1".to_string();
+        profile.primary_relay.port = upstream_port;
+        profile.fallback_relay = None;
+
+        let (owner, status) = start_client_transport(&profile).unwrap();
+        let (state, endpoint) = status.snapshot();
+        assert_eq!(state, TransportState::Ready);
+        let endpoint = endpoint.unwrap();
+        let live_connection = TcpStream::connect(endpoint.socket_addr());
+        assert!(live_connection.is_ok());
+        drop(live_connection);
+        sidecar.join().unwrap();
+
+        drop(owner);
+        let (state_after_drop, endpoint_after_drop) = status.snapshot();
+        assert_eq!(state_after_drop, TransportState::Stopped);
+        assert_eq!(endpoint_after_drop, None);
+    }
+
+    #[test]
+    fn fixed_offline_status_never_exposes_endpoint() {
+        assert_eq!(
+            ClientTransportStatus::offline().snapshot(),
+            (TransportState::Offline, None)
+        );
     }
 
     #[test]
@@ -1085,6 +1220,7 @@ mod tests {
         let profile_clone = Arc::clone(&profile_arc);
         let session_manager = Arc::new(Mutex::new(ApplicationSessionManager::new()));
         let session_manager_clone = Arc::clone(&session_manager);
+        let transport_status = ClientTransportStatus::fixed(TransportState::Ready, None);
 
         let server_thread = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
@@ -1093,8 +1229,7 @@ mod tests {
                 &profile_clone,
                 &session_manager_clone,
                 "dev_test_123",
-                TransportState::Ready,
-                None,
+                &transport_status,
             );
         });
 
@@ -1123,6 +1258,7 @@ mod tests {
         let profile_clone = Arc::clone(&profile_arc);
         let session_manager = Arc::new(Mutex::new(ApplicationSessionManager::new()));
         let session_manager_clone = Arc::clone(&session_manager);
+        let transport_status = ClientTransportStatus::fixed(TransportState::Ready, None);
 
         let server_thread = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
@@ -1131,8 +1267,7 @@ mod tests {
                 &profile_clone,
                 &session_manager_clone,
                 "dev_test_123",
-                TransportState::Ready,
-                None,
+                &transport_status,
             );
         });
 
