@@ -26,7 +26,9 @@ jobs:
       - name: Repair helper assertion
         run: python3 scripts/fix_t041r_browser_composition_helper.py
       - name: Apply typed HTTP composition
-        run: python3 scripts/patch_t041r_browser_http_composition.py
+        run: |
+          python3 scripts/patch_t041r_browser_http_composition.py
+          python3 scripts/fix_t041r_browser_qualification_typed_proxy.py
       - name: Format
         run: cargo fmt --all
       - name: Architecture boundaries
@@ -42,7 +44,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/t041r-browser-http-composition.yml scripts/patch_t041r_browser_http_composition.py scripts/fix_t041r_browser_composition_helper.py
-          git add crates/webgate-browser/src/lib.rs crates/webgate-browser/src/adapter.rs crates/webgate-browser/src/capsule.rs crates/webgate-app/src/main.rs crates/webgate-app/src/session.rs
+          git rm .github/workflows/t041r-browser-http-composition.yml scripts/patch_t041r_browser_http_composition.py scripts/fix_t041r_browser_composition_helper.py scripts/fix_t041r_browser_qualification_typed_proxy.py
+          git add crates/webgate-browser/src/lib.rs crates/webgate-browser/src/adapter.rs crates/webgate-browser/src/capsule.rs crates/webgate-browser/src/qualification.rs crates/webgate-app/src/main.rs crates/webgate-app/src/session.rs
           git commit -m "feat(browser): enforce typed HTTP renderer proxy composition"
           git push origin HEAD:main
