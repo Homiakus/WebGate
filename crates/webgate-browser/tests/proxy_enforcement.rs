@@ -1,18 +1,21 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::unwrap_used, clippy::panic)]
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
+use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use webgate_browser::capsule::{BrowserCapsule, CapsuleError};
 use webgate_browser::qualification::{
     QualificationRunner, QualificationScenario, RenderingModel, SubresourceRequest,
 };
-use webgate_browser::{BrowserKind, BrowserLifecycleEvent, BrowserState};
+use webgate_browser::{
+    BrowserKind, BrowserLifecycleEvent, BrowserState, HttpProxyEndpoint, HttpProxyEndpointError,
+};
 use webgate_core::policy::{NavigationPolicy, PolicyError};
 
-fn spawn_test_loopback_listener() -> (TcpListener, SocketAddr) {
+fn spawn_test_loopback_listener() -> (TcpListener, HttpProxyEndpoint) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    (listener, addr)
+    let endpoint = HttpProxyEndpoint::new(addr.ip(), addr.port()).unwrap();
+    (listener, endpoint)
 }
 
 #[test]
@@ -33,11 +36,9 @@ fn browser_capsule_fails_closed_without_proxy() {
 #[test]
 fn browser_capsule_rejects_non_loopback_proxy_and_never_falls_back() {
     let mut capsule = BrowserCapsule::new(BrowserKind::Servo, NavigationPolicy::default());
-    let public_proxy = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 195)), 8080);
-
     assert_eq!(
-        capsule.attach_proxy(public_proxy),
-        Err(CapsuleError::DirectEgressForbidden)
+        HttpProxyEndpoint::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 195)), 8080),
+        Err(HttpProxyEndpointError::NotLoopback)
     );
     assert_eq!(capsule.start(), Err(CapsuleError::ProxyMissingFailClosed));
     assert_eq!(capsule.state(), BrowserState::Failed);
@@ -48,7 +49,7 @@ fn browser_capsule_enforces_proxy_and_subresource_containment() {
     let (_listener, proxy_addr) = spawn_test_loopback_listener();
     let mut capsule = BrowserCapsule::new(BrowserKind::Servo, NavigationPolicy::default());
 
-    capsule.attach_proxy(proxy_addr).unwrap();
+    capsule.attach_proxy(proxy_addr);
     capsule.start().unwrap();
     assert_eq!(capsule.state(), BrowserState::Ready);
     assert!(capsule.adapter().is_some());
@@ -80,7 +81,7 @@ fn browser_capsule_preserves_proxy_across_lifecycle_recreation() {
     let (_listener, proxy_addr) = spawn_test_loopback_listener();
     let mut capsule = BrowserCapsule::new(BrowserKind::Servo, NavigationPolicy::default());
 
-    capsule.attach_proxy(proxy_addr).unwrap();
+    capsule.attach_proxy(proxy_addr);
     capsule.start().unwrap();
 
     let entry = capsule
@@ -109,7 +110,7 @@ fn browser_capsule_preserves_proxy_across_lifecycle_recreation() {
     assert_eq!(capsule.state(), BrowserState::Stopped);
 
     let mut new_capsule = BrowserCapsule::new(BrowserKind::Servo, NavigationPolicy::default());
-    new_capsule.attach_proxy(proxy_addr).unwrap();
+    new_capsule.attach_proxy(proxy_addr);
     new_capsule.start().unwrap();
     new_capsule
         .handle_lifecycle_event(BrowserLifecycleEvent::RestoreState(saved_url))
@@ -191,6 +192,9 @@ fn browser_capsule_with_dual_relay_failover_proxy_handles_relay_failure() {
     use webgate_transport::TransportProvider;
     use webgate_transport::dual_failover::{DualRelayConfig, DualRelayFailoverTransport};
     use webgate_transport::failover::{FailoverConfig, TransportRole};
+    use webgate_transport::restricted_http_connect::{
+        RestrictedHttpConnectConfig, RestrictedHttpConnectTransport,
+    };
 
     // Spawn Fake Relay A
     let ln_a = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -250,11 +254,25 @@ fn browser_capsule_with_dual_relay_failover_proxy_handles_relay_failure() {
     let mut transport = DualRelayFailoverTransport::new(config).unwrap();
     let proxy_ep = transport.start_proxy().unwrap();
 
+    let mut browser_bridge = RestrictedHttpConnectTransport::new(RestrictedHttpConnectConfig {
+        name: "BrowserCapsule-HTTP-Bridge".to_string(),
+        upstream_socks5: proxy_ep,
+        local_listen_port: 0,
+        allowed_domains: vec!["service".to_string()],
+        allowed_ports: vec![443],
+        connect_timeout: Duration::from_millis(300),
+        max_header_bytes: 4096,
+    })
+    .unwrap();
+    let http_proxy = browser_bridge.start_proxy().unwrap();
+    let http_addr = http_proxy.socket_addr();
+    let browser_proxy = HttpProxyEndpoint::new(http_addr.ip(), http_addr.port()).unwrap();
+
     let mut capsule = BrowserCapsule::new(
         BrowserKind::Servo,
         NavigationPolicy::new(vec!["service".to_string()]),
     );
-    capsule.attach_proxy(proxy_ep.socket_addr()).unwrap();
+    capsule.attach_proxy(browser_proxy);
     capsule.start().unwrap();
     assert_eq!(capsule.state(), BrowserState::Ready);
 
@@ -276,6 +294,7 @@ fn browser_capsule_with_dual_relay_failover_proxy_handles_relay_failure() {
         .unwrap();
     assert!(sub.contains("proxied_response"));
 
+    browser_bridge.stop();
     transport.stop();
     shut_b.store(true, Ordering::Release);
     let _ = std::net::TcpStream::connect_timeout(&addr_b, Duration::from_millis(50));

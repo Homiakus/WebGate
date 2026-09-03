@@ -4,8 +4,10 @@ use crate::adapter::{
     RendererQualificationEvidence, RendererQualificationSnapshot, ServoContractAdapter,
     ServoEmbeddingConfig,
 };
-use crate::{BrowserConfig, BrowserKind, BrowserLifecycleEvent, BrowserState, ProtectedBrowser};
-use std::net::SocketAddr;
+use crate::{
+    BrowserConfig, BrowserKind, BrowserLifecycleEvent, BrowserState, HttpProxyEndpoint,
+    ProtectedBrowser,
+};
 use webgate_core::Platform;
 use webgate_core::policy::{NavigationPolicy, PolicyError, ValidatedUrl};
 
@@ -13,7 +15,6 @@ use webgate_core::policy::{NavigationPolicy, PolicyError, ValidatedUrl};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapsuleError {
     ProxyMissingFailClosed,
-    DirectEgressForbidden,
     InvalidProxyAddress(String),
     NavigationPolicyViolation(PolicyError),
     BrowserNotReady(BrowserState),
@@ -23,20 +24,13 @@ pub enum CapsuleError {
 /// Loopback proxy configuration attached to the browser capsule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CapsuleProxyConfig {
-    pub proxy_endpoint: SocketAddr,
+    pub proxy_endpoint: HttpProxyEndpoint,
 }
 
 impl CapsuleProxyConfig {
-    pub fn new(proxy_endpoint: SocketAddr) -> Result<Self, CapsuleError> {
-        if !proxy_endpoint.ip().is_loopback() {
-            return Err(CapsuleError::DirectEgressForbidden);
-        }
-        if proxy_endpoint.port() == 0 {
-            return Err(CapsuleError::InvalidProxyAddress(
-                "port cannot be zero".to_string(),
-            ));
-        }
-        Ok(Self { proxy_endpoint })
+    #[must_use]
+    pub const fn new(proxy_endpoint: HttpProxyEndpoint) -> Self {
+        Self { proxy_endpoint }
     }
 }
 
@@ -103,10 +97,8 @@ impl BrowserCapsule {
     }
 
     /// Attaches the mandatory loopback proxy. All outbound traffic MUST flow through it.
-    pub fn attach_proxy(&mut self, endpoint: SocketAddr) -> Result<(), CapsuleError> {
-        let config = CapsuleProxyConfig::new(endpoint)?;
-        self.proxy_config = Some(config);
-        Ok(())
+    pub fn attach_proxy(&mut self, endpoint: HttpProxyEndpoint) {
+        self.proxy_config = Some(CapsuleProxyConfig::new(endpoint));
     }
 
     /// Starts the browser capsule. Fails closed if no verified loopback proxy is attached.
@@ -258,9 +250,9 @@ mod tests {
     #[test]
     fn capsule_starts_with_valid_loopback_proxy() {
         let mut capsule = BrowserCapsule::new(BrowserKind::Servo, NavigationPolicy::default());
-        let loopback = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000);
+        let loopback = HttpProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000).unwrap();
 
-        assert_eq!(capsule.attach_proxy(loopback), Ok(()));
+        capsule.attach_proxy(loopback);
         assert_eq!(capsule.start(), Ok(()));
         assert_eq!(capsule.state(), BrowserState::Ready);
         assert!(capsule.adapter().is_some());
@@ -276,22 +268,10 @@ mod tests {
     }
 
     #[test]
-    fn capsule_rejects_non_loopback_proxy_egress() {
-        let mut capsule = BrowserCapsule::new(BrowserKind::Servo, NavigationPolicy::default());
-        let public_ip = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 8080);
-
-        assert_eq!(
-            capsule.attach_proxy(public_ip),
-            Err(CapsuleError::DirectEgressForbidden)
-        );
-        assert_eq!(capsule.start(), Err(CapsuleError::ProxyMissingFailClosed));
-    }
-
-    #[test]
     fn capsule_navigates_to_valid_service_and_dispatches_subresource() {
         let mut capsule = BrowserCapsule::new(BrowserKind::Servo, NavigationPolicy::default());
-        let loopback = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000);
-        capsule.attach_proxy(loopback).unwrap();
+        let loopback = HttpProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000).unwrap();
+        capsule.attach_proxy(loopback);
         capsule.start().unwrap();
 
         // Positive navigation
@@ -327,8 +307,8 @@ mod tests {
     #[test]
     fn capsule_handles_android_lifecycle_and_recreation() {
         let mut capsule = BrowserCapsule::new(BrowserKind::Servo, NavigationPolicy::default());
-        let loopback = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000);
-        capsule.attach_proxy(loopback).unwrap();
+        let loopback = HttpProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000).unwrap();
+        capsule.attach_proxy(loopback);
         capsule.start().unwrap();
 
         capsule.navigate("webgate://service/docs/spec").unwrap();
@@ -357,7 +337,7 @@ mod tests {
         assert_eq!(capsule.state(), BrowserState::Stopped);
 
         // Rehydrate
-        capsule.attach_proxy(loopback).unwrap();
+        capsule.attach_proxy(loopback);
         capsule.start().unwrap();
         capsule
             .handle_lifecycle_event(BrowserLifecycleEvent::RestoreState(saved_url))

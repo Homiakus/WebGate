@@ -1,8 +1,7 @@
 #![forbid(unsafe_code)]
 
-use crate::BrowserKind;
 use crate::capsule::{BrowserCapsule, CapsuleError};
-use std::net::SocketAddr;
+use crate::{BrowserKind, HttpProxyEndpoint};
 use webgate_core::policy::NavigationPolicy;
 
 /// Web application rendering architecture tested by the qualification suite.
@@ -48,12 +47,12 @@ pub struct QualificationReport {
 /// Test runner verifying web application loading (SPA/CSR/SSR) strictly via secure loopback proxy.
 #[derive(Debug)]
 pub struct QualificationRunner {
-    proxy_endpoint: SocketAddr,
+    proxy_endpoint: HttpProxyEndpoint,
 }
 
 impl QualificationRunner {
     #[must_use]
-    pub const fn new(proxy_endpoint: SocketAddr) -> Self {
+    pub const fn new(proxy_endpoint: HttpProxyEndpoint) -> Self {
         Self { proxy_endpoint }
     }
 
@@ -63,7 +62,7 @@ impl QualificationRunner {
         scenario: &QualificationScenario,
     ) -> Result<QualificationReport, CapsuleError> {
         let mut capsule = BrowserCapsule::new(BrowserKind::Servo, NavigationPolicy::default());
-        capsule.attach_proxy(self.proxy_endpoint)?;
+        capsule.attach_proxy(self.proxy_endpoint);
         capsule.start()?;
 
         // Primary document navigation
@@ -114,8 +113,8 @@ mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
 
-    fn test_loopback_proxy() -> SocketAddr {
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41080)
+    fn test_loopback_proxy() -> HttpProxyEndpoint {
+        HttpProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41080).unwrap()
     }
 
     #[test]

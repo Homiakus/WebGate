@@ -2,13 +2,13 @@
 
 use std::collections::HashMap;
 
-use webgate_browser::BrowserKind;
 use webgate_browser::capsule::{BrowserCapsule, CapsuleError};
+use webgate_browser::{BrowserKind, HttpProxyEndpoint};
 use webgate_core::broker::{
     BrokerCapability, BrokerRequest, BrokerRequestPayload, BrokerSecurityGate,
 };
 use webgate_core::config::ClientConfigProfile;
-use webgate_transport::{LocalProxyEndpoint, TransportState};
+use webgate_transport::{HttpConnectProxyEndpoint, TransportState};
 
 /// Human/API-visible lifecycle of one protected application session.
 ///
@@ -127,7 +127,7 @@ impl ApplicationSessionManager {
         profile: &ClientConfigProfile,
         target_url: &str,
         transport_state: TransportState,
-        protected_proxy: Option<LocalProxyEndpoint>,
+        protected_proxy: Option<HttpConnectProxyEndpoint>,
     ) -> ApplicationSessionSnapshot {
         let session_id = self.next_session_id();
         let target_url = target_url.to_string();
@@ -189,15 +189,20 @@ impl ApplicationSessionManager {
         let mut capsule = BrowserCapsule::new(BrowserKind::Servo, policy);
 
         transitions.push(ApplicationSessionState::StartingProtectedBrowser);
-        if let Err(error) = capsule.attach_proxy(proxy.socket_addr()) {
-            return self.insert_terminal(
-                session_id,
-                target_url,
-                ApplicationSessionState::Failed,
-                format!("protected browser proxy attachment failed: {error:?}"),
-                transitions,
-            );
-        }
+        let proxy_address = proxy.socket_addr();
+        let browser_proxy = match HttpProxyEndpoint::new(proxy_address.ip(), proxy_address.port()) {
+            Ok(endpoint) => endpoint,
+            Err(error) => {
+                return self.insert_terminal(
+                    session_id,
+                    target_url,
+                    ApplicationSessionState::Failed,
+                    format!("protected browser HTTP proxy conversion failed: {error:?}"),
+                    transitions,
+                );
+            }
+        };
+        capsule.attach_proxy(browser_proxy);
 
         if let Err(error) = capsule.start() {
             return self.insert_terminal(
@@ -292,8 +297,8 @@ mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
 
-    fn test_proxy() -> LocalProxyEndpoint {
-        LocalProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 43117).unwrap()
+    fn test_proxy() -> HttpConnectProxyEndpoint {
+        HttpConnectProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 43117).unwrap()
     }
 
     #[test]

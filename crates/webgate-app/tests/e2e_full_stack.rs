@@ -10,12 +10,15 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use webgate_browser::capsule::BrowserCapsule;
-use webgate_browser::{BrowserKind, BrowserLifecycleEvent, BrowserState};
+use webgate_browser::{BrowserKind, BrowserLifecycleEvent, BrowserState, HttpProxyEndpoint};
 use webgate_core::device::KeyAlgorithm;
 use webgate_core::policy::NavigationPolicy;
 use webgate_platform::keystore::{DeviceKeyStore, PersistentFileDeviceKeyStore};
 use webgate_transport::dual_failover::{DualRelayConfig, DualRelayFailoverTransport};
 use webgate_transport::failover::{FailoverConfig, TransportRole};
+use webgate_transport::restricted_http_connect::{
+    RestrictedHttpConnectConfig, RestrictedHttpConnectTransport,
+};
 use webgate_transport::{TransportProvider, TransportState};
 
 struct MockSocks5Relay {
@@ -322,12 +325,26 @@ fn test_real_end_to_end_full_stack_qualification() {
     assert_eq!(transport.state(), TransportState::Ready);
     assert_eq!(transport.active_role(), Some(TransportRole::Primary));
 
-    // 5. Configure & Start BrowserCapsule attached to Transport SOCKS5 Proxy
+    // 5. Adapt the restricted SOCKS5 transport into Servo-compatible HTTP CONNECT.
+    let mut browser_bridge = RestrictedHttpConnectTransport::new(RestrictedHttpConnectConfig {
+        name: "E2E-Browser-HTTP-Bridge".to_string(),
+        upstream_socks5: proxy_endpoint,
+        local_listen_port: 0,
+        allowed_domains: vec!["service".to_string(), "corp.internal".to_string()],
+        allowed_ports: vec![backend_addr.port(), 443],
+        connect_timeout: Duration::from_millis(300),
+        max_header_bytes: 4096,
+    })
+    .unwrap();
+    let http_proxy = browser_bridge.start_proxy().unwrap();
+    let http_addr = http_proxy.socket_addr();
+    let browser_proxy = HttpProxyEndpoint::new(http_addr.ip(), http_addr.port()).unwrap();
+
     let mut capsule = BrowserCapsule::new(
         BrowserKind::Servo,
         NavigationPolicy::new(vec!["service".to_string(), "corp.internal".to_string()]),
     );
-    capsule.attach_proxy(proxy_endpoint.socket_addr()).unwrap();
+    capsule.attach_proxy(browser_proxy);
     capsule.start().unwrap();
     assert_eq!(capsule.state(), BrowserState::Ready);
 
@@ -404,6 +421,7 @@ fn test_real_end_to_end_full_stack_qualification() {
     // Cleanup
     let _ = fs::remove_file(&key_path);
     capsule.shutdown();
+    browser_bridge.stop();
     transport.stop();
     backend_shutdown.store(true, Ordering::Release);
     let _ = TcpStream::connect_timeout(&backend_addr, Duration::from_millis(50));

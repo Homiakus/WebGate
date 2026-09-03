@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 
-use crate::{BrowserConfig, BrowserKind, BrowserLifecycleEvent, BrowserState, ProtectedBrowser};
-use std::net::SocketAddr;
+use crate::{
+    BrowserConfig, BrowserKind, BrowserLifecycleEvent, BrowserState, HttpProxyEndpoint,
+    ProtectedBrowser,
+};
 
 /// Rendering viewport dimensions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +69,7 @@ pub struct ServoEmbeddingConfig {
     pub viewport: ViewportSize,
     pub user_agent_suffix: String,
     pub javascript_enabled: bool,
-    pub proxy_endpoint: Option<SocketAddr>,
+    pub proxy_endpoint: Option<HttpProxyEndpoint>,
 }
 
 impl ServoEmbeddingConfig {
@@ -83,7 +85,7 @@ impl ServoEmbeddingConfig {
     }
 
     #[must_use]
-    pub fn with_proxy(mut self, proxy_endpoint: SocketAddr) -> Self {
+    pub fn with_proxy(mut self, proxy_endpoint: HttpProxyEndpoint) -> Self {
         self.proxy_endpoint = Some(proxy_endpoint);
         self
     }
@@ -226,7 +228,7 @@ impl ServoContractAdapter {
     }
 
     #[must_use]
-    pub fn proxy_endpoint(&self) -> Option<SocketAddr> {
+    pub fn proxy_endpoint(&self) -> Option<HttpProxyEndpoint> {
         self.config.proxy_endpoint
     }
 }
@@ -275,8 +277,8 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use webgate_core::Platform;
 
-    fn test_loopback_proxy() -> SocketAddr {
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41080)
+    fn test_loopback_proxy() -> HttpProxyEndpoint {
+        HttpProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41080).unwrap()
     }
 
     #[test]
@@ -286,17 +288,6 @@ mod tests {
         let mut adapter = ServoContractAdapter::new(config);
 
         assert_eq!(adapter.state(), BrowserState::Stopped);
-        assert!(adapter.initialize().is_err());
-        assert_eq!(adapter.state(), BrowserState::Failed);
-    }
-
-    #[test]
-    fn adapter_rejects_non_loopback_proxy() {
-        let b_cfg = BrowserConfig::new(Platform::Windows);
-        let public_proxy = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1)), 8080);
-        let config = ServoEmbeddingConfig::new(b_cfg).with_proxy(public_proxy);
-        let mut adapter = ServoContractAdapter::new(config);
-
         assert!(adapter.initialize().is_err());
         assert_eq!(adapter.state(), BrowserState::Failed);
     }

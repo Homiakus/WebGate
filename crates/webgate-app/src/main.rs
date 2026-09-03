@@ -21,11 +21,17 @@ use webgate_transport::dual_failover::{
     DualRelayConfig, DualRelayError, DualRelayFailoverTransport, DualRelayStatusHandle,
 };
 use webgate_transport::failover::FailoverConfig;
+use webgate_transport::restricted_http_connect::{
+    RestrictedHttpConnectConfig, RestrictedHttpConnectError, RestrictedHttpConnectStatusHandle,
+    RestrictedHttpConnectTransport,
+};
 use webgate_transport::restricted_socks5::{
     RestrictedProxyError, RestrictedProxyStatusHandle, RestrictedSocks5Config,
     RestrictedSocks5Transport,
 };
-use webgate_transport::{LocalProxyEndpoint, TransportProvider, TransportState};
+use webgate_transport::{
+    HttpConnectProxyEndpoint, LocalProxyEndpoint, TransportProvider, TransportState,
+};
 
 const CLIENT_UI_HTML: &str = include_str!("client_ui.html");
 const CLIENT_UI_TRUTH_PATCH_JS: &str = include_str!("client_ui_truth_patch.js");
@@ -70,15 +76,15 @@ fn build_dual_relay_transport(
     })
 }
 
-/// Owns the running transport listener/workers for exactly as long as the client
-/// process needs the protected endpoint. Dropping this value revokes the endpoint.
+/// Base protected SOCKS transport owner. It is intentionally private to the
+/// application composition layer and never crosses into the browser crate.
 #[derive(Debug)]
-enum ClientTransportOwner {
+enum ClientBaseTransportOwner {
     Primary(RestrictedSocks5Transport),
     Dual(DualRelayFailoverTransport),
 }
 
-impl ClientTransportOwner {
+impl ClientBaseTransportOwner {
     #[must_use]
     fn state(&self) -> TransportState {
         match self {
@@ -88,20 +94,13 @@ impl ClientTransportOwner {
     }
 }
 
-/// Live transport truth source used by GUI, CLI and the session orchestrator.
-/// A fixed snapshot is permitted only for fail-closed bootstrap failure/tests;
-/// successful transports always use a live status handle tied to the owner state.
 #[derive(Debug, Clone)]
-enum ClientTransportStatus {
+enum ClientBaseTransportStatus {
     Primary(RestrictedProxyStatusHandle),
     Dual(DualRelayStatusHandle),
-    Fixed {
-        state: TransportState,
-        endpoint: Option<LocalProxyEndpoint>,
-    },
 }
 
-impl ClientTransportStatus {
+impl ClientBaseTransportStatus {
     #[must_use]
     fn snapshot(&self) -> (TransportState, Option<LocalProxyEndpoint>) {
         match self {
@@ -109,6 +108,61 @@ impl ClientTransportStatus {
             Self::Dual(status) => {
                 let (state, _role, endpoint, _primary_health, _fallback_health) = status.snapshot();
                 (state, endpoint)
+            }
+        }
+    }
+}
+
+/// Owns both protocol layers. The bridge field is declared first so it is
+/// revoked before the underlying SOCKS listener when this owner is dropped.
+#[derive(Debug)]
+struct ClientTransportOwner {
+    browser_bridge: RestrictedHttpConnectTransport,
+    base: ClientBaseTransportOwner,
+}
+
+impl ClientTransportOwner {
+    #[must_use]
+    fn state(&self) -> TransportState {
+        combine_transport_states(self.base.state(), self.browser_bridge.state())
+    }
+}
+
+/// Live transport truth source used by GUI, CLI and the session orchestrator.
+/// Successful runtime state is the conjunction of the base SOCKS layer and the
+/// renderer-facing restricted HTTP CONNECT bridge.
+#[derive(Debug, Clone)]
+enum ClientTransportStatus {
+    Live {
+        base: ClientBaseTransportStatus,
+        browser_bridge: RestrictedHttpConnectStatusHandle,
+    },
+    Fixed {
+        state: TransportState,
+        endpoint: Option<HttpConnectProxyEndpoint>,
+    },
+}
+
+impl ClientTransportStatus {
+    #[must_use]
+    fn snapshot(&self) -> (TransportState, Option<HttpConnectProxyEndpoint>) {
+        match self {
+            Self::Live {
+                base,
+                browser_bridge,
+            } => {
+                let (base_state, base_endpoint) = base.snapshot();
+                let (bridge_state, bridge_endpoint) = browser_bridge.snapshot();
+                let combined = combine_transport_states(base_state, bridge_state);
+                let endpoint =
+                    if matches!(combined, TransportState::Ready | TransportState::Degraded)
+                        && base_endpoint.is_some()
+                    {
+                        bridge_endpoint
+                    } else {
+                        None
+                    };
+                (combined, endpoint)
             }
             Self::Fixed { state, endpoint } => (*state, *endpoint),
         }
@@ -124,8 +178,24 @@ impl ClientTransportStatus {
 
     #[cfg(test)]
     #[must_use]
-    const fn fixed(state: TransportState, endpoint: Option<LocalProxyEndpoint>) -> Self {
+    const fn fixed(state: TransportState, endpoint: Option<HttpConnectProxyEndpoint>) -> Self {
         Self::Fixed { state, endpoint }
+    }
+}
+
+const fn combine_transport_states(base: TransportState, bridge: TransportState) -> TransportState {
+    if matches!(base, TransportState::Offline) || matches!(bridge, TransportState::Offline) {
+        TransportState::Offline
+    } else if matches!(base, TransportState::Stopped) || matches!(bridge, TransportState::Stopped) {
+        TransportState::Stopped
+    } else if matches!(base, TransportState::Starting) || matches!(bridge, TransportState::Starting)
+    {
+        TransportState::Starting
+    } else if matches!(base, TransportState::Degraded) || matches!(bridge, TransportState::Degraded)
+    {
+        TransportState::Degraded
+    } else {
+        TransportState::Ready
     }
 }
 
@@ -133,7 +203,9 @@ impl ClientTransportStatus {
 enum ClientTransportStartError {
     Primary(RestrictedProxyError),
     Dual(DualRelayError),
-    StatusHandleUnavailable,
+    BrowserBridge(RestrictedHttpConnectError),
+    BaseStatusHandleUnavailable,
+    BridgeStatusHandleUnavailable,
 }
 
 impl std::fmt::Display for ClientTransportStartError {
@@ -141,7 +213,13 @@ impl std::fmt::Display for ClientTransportStartError {
         match self {
             Self::Primary(error) => write!(formatter, "primary transport: {error:?}"),
             Self::Dual(error) => write!(formatter, "dual transport: {error:?}"),
-            Self::StatusHandleUnavailable => formatter.write_str("live status handle unavailable"),
+            Self::BrowserBridge(error) => write!(formatter, "browser HTTP bridge: {error:?}"),
+            Self::BaseStatusHandleUnavailable => {
+                formatter.write_str("base live status handle unavailable")
+            }
+            Self::BridgeStatusHandleUnavailable => {
+                formatter.write_str("browser bridge live status handle unavailable")
+            }
         }
     }
 }
@@ -149,34 +227,67 @@ impl std::fmt::Display for ClientTransportStartError {
 fn start_client_transport(
     profile: &ClientConfigProfile,
 ) -> Result<(ClientTransportOwner, ClientTransportStatus), ClientTransportStartError> {
-    if let Some(fallback) = &profile.fallback_relay {
+    let (base_owner, base_status, base_endpoint) = if let Some(fallback) = &profile.fallback_relay {
         let mut transport = build_dual_relay_transport(profile, fallback)
             .map_err(ClientTransportStartError::Dual)?;
-        transport
+        let endpoint = transport
             .start_proxy()
             .map_err(ClientTransportStartError::Dual)?;
         let status = transport
             .status_handle()
-            .ok_or(ClientTransportStartError::StatusHandleUnavailable)?;
-        let owner = ClientTransportOwner::Dual(transport);
-        debug_assert!(matches!(
-            owner.state(),
-            TransportState::Ready | TransportState::Degraded
-        ));
-        Ok((owner, ClientTransportStatus::Dual(status)))
+            .ok_or(ClientTransportStartError::BaseStatusHandleUnavailable)?;
+        (
+            ClientBaseTransportOwner::Dual(transport),
+            ClientBaseTransportStatus::Dual(status),
+            endpoint,
+        )
     } else {
         let mut transport =
             build_primary_transport(profile).map_err(ClientTransportStartError::Primary)?;
-        transport
+        let endpoint = transport
             .start_proxy()
             .map_err(ClientTransportStartError::Primary)?;
         let status = transport
             .status_handle()
-            .ok_or(ClientTransportStartError::StatusHandleUnavailable)?;
-        let owner = ClientTransportOwner::Primary(transport);
-        debug_assert_eq!(owner.state(), TransportState::Ready);
-        Ok((owner, ClientTransportStatus::Primary(status)))
-    }
+            .ok_or(ClientTransportStartError::BaseStatusHandleUnavailable)?;
+        (
+            ClientBaseTransportOwner::Primary(transport),
+            ClientBaseTransportStatus::Primary(status),
+            endpoint,
+        )
+    };
+
+    let mut browser_bridge = RestrictedHttpConnectTransport::new(RestrictedHttpConnectConfig {
+        name: "webgate-browser-http-connect".to_string(),
+        upstream_socks5: base_endpoint,
+        local_listen_port: 0,
+        allowed_domains: profile.allowed_domains.clone(),
+        allowed_ports: vec![443],
+        connect_timeout: PRIMARY_PROXY_CONNECT_TIMEOUT,
+        max_header_bytes: 16 * 1024,
+    })
+    .map_err(ClientTransportStartError::BrowserBridge)?;
+    browser_bridge
+        .start_proxy()
+        .map_err(ClientTransportStartError::BrowserBridge)?;
+    let bridge_status = browser_bridge
+        .status_handle()
+        .ok_or(ClientTransportStartError::BridgeStatusHandleUnavailable)?;
+
+    let owner = ClientTransportOwner {
+        browser_bridge,
+        base: base_owner,
+    };
+    let status = ClientTransportStatus::Live {
+        base: base_status,
+        browser_bridge: bridge_status,
+    };
+    debug_assert!(matches!(
+        owner.state(),
+        TransportState::Ready | TransportState::Degraded
+    ));
+    debug_assert!(status.snapshot().1.is_some());
+    Ok((owner, status))
 }
 
 const fn transport_state_label(state: TransportState) -> &'static str {
@@ -189,7 +300,7 @@ const fn transport_state_label(state: TransportState) -> &'static str {
     }
 }
 
-fn proxy_json(endpoint: Option<LocalProxyEndpoint>) -> String {
+fn proxy_json(endpoint: Option<HttpConnectProxyEndpoint>) -> String {
     match endpoint {
         Some(endpoint) => format!("\"{}\"", endpoint.socket_addr()),
         None => "null".to_string(),
@@ -934,7 +1045,7 @@ mod tests {
     fn http_roundtrip(
         request: &str,
         transport_state: TransportState,
-        proxy: Option<LocalProxyEndpoint>,
+        proxy: Option<HttpConnectProxyEndpoint>,
     ) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1107,7 +1218,7 @@ mod tests {
 
     #[test]
     fn navigate_ready_reports_transport_ready_not_open_session() {
-        let proxy = LocalProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 43117).unwrap();
+        let proxy = HttpConnectProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 43117).unwrap();
         let body = r#"{"target_url":"webgate://service/docs/overview"}"#;
         let request = format!(
             "POST /api/navigate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1123,7 +1234,7 @@ mod tests {
 
     #[test]
     fn session_open_invokes_capsule_but_blocks_unqualified_renderer() {
-        let proxy = LocalProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 43117).unwrap();
+        let proxy = HttpConnectProxyEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 43117).unwrap();
         let body = r#"{"target_url":"webgate://service/docs/overview"}"#;
         let request = format!(
             "POST /api/session/open HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
