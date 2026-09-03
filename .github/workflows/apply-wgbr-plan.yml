@@ -1,0 +1,35 @@
+name: apply-wgbr-plan
+
+on:
+  push:
+    branches:
+      - work/wgbr-architecture-plan-20260903
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/wgbr-architecture-plan-20260903
+          fetch-depth: 0
+      - name: Append WGBR plan to MASTER_PLAN
+        run: |
+          cat .tmp/WGBR_MASTER_PLAN_APPENDIX.md >> MASTER_PLAN.md
+      - name: Remove temporary generator files
+        run: |
+          rm .tmp/WGBR_MASTER_PLAN_APPENDIX.md
+          rm .github/workflows/apply-wgbr-plan.yml
+          rmdir .tmp 2>/dev/null || true
+      - name: Commit generated plan
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add MASTER_PLAN.md .github/workflows .tmp 2>/dev/null || true
+          git add -u
+          git commit -m "docs(plan): add atomic WGBR migration program"
+          git push origin HEAD:work/wgbr-architecture-plan-20260903
