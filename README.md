@@ -1,24 +1,26 @@
 # WebGate
 
-**WebGate** — это защищенный клиент и шлюз управления частными ресурсами с изоляцией на уровне приложения (`Application-Scoped Access`) без изменения общесистемных сетевых маршрутов (`OS default route untouched`).
+**WebGate** — защищенный клиент и шлюз управления частными ресурсами с изоляцией на уровне приложения (`Application-Scoped Access`) без изменения общесистемных сетевых маршрутов (`OS default route untouched`).
 
-Основной сценарий взаимодействия (UX):
+Основной сценарий взаимодействия:
 
 ```text
 Telegram / доверенная ссылка
         ↓
      WebGate
         ↓
-Встроенный браузер Servo
+WebGate-owned protected browser/runtime
         ↓
-Локальный защищенный транспорт
+Локальный destination-restricted transport boundary
         ↓
 Отказоустойчивый слой релеев / VPS
         ↓
 Приватный сервер приложений + SecureAcces
 ```
 
-По умолчанию общесистемные сетевые маршруты операционной системы остаются нетронутыми. Только трафик, создаваемый встроенной браузерной капсулой WebGate, направляется в защищенный транспорт.
+По умолчанию общесистемные сетевые маршруты операционной системы остаются нетронутыми. Только трафик защищенной browser/runtime-капсулы WebGate должен проходить через WebGate transport boundary.
+
+> **Важно о текущем статусе:** WebGate находится в активной фазе security/resilience convergence. Репозиторий содержит значительную часть реализованного фундамента и release-candidate сборки, но проект **не считается production-qualified**, пока остаются открытые P0-блокеры из `MASTER_PLAN.md` и программы `docs/implementation/CYBERNETIC_STABILITY_PROGRAM.md`.
 
 ---
 
@@ -39,16 +41,18 @@ WebGate содержит кроссплатформенный скрипт уп�
 Запуск любого лаунчера без аргументов открывает интерактивное меню. Примеры вызова команд:
 
 ```sh
-python3 scripts/project_manager.py doctor      # Проверка здоровья окружения
+python3 scripts/project_manager.py doctor
 python3 scripts/project_manager.py install --dry-run
 python3 scripts/project_manager.py install --yes
-python3 scripts/project_manager.py verify      # Полный шлюз качества (CI-Parity)
-python3 scripts/project_manager.py build       # Сборка debug
-python3 scripts/project_manager.py build --release # Сборка оптимизированных релизов
-python3 scripts/project_manager.py package     # Сборка дистрибутива и подписание манифестов
+python3 scripts/project_manager.py verify
+python3 scripts/project_manager.py build
+python3 scripts/project_manager.py build --release
+python3 scripts/project_manager.py package
 ```
 
-Установщик строго ограничен разрешенным списком (allowlist): он не принимает произвольные имена пакетов или шелл-команды и не оперирует конфиденциальными данными WebGate. Полный контракт описан в [`docs/development/PROJECT_MANAGER.md`](docs/development/PROJECT_MANAGER.md).
+Установщик строго ограничен разрешенным списком (allowlist): он не принимает произвольные имена пакетов или shell-команды и не должен оперировать конфиденциальными данными WebGate. Контракт описан в [`docs/development/PROJECT_MANAGER.md`](docs/development/PROJECT_MANAGER.md).
+
+`verify`, успешная сборка или создание package сами по себе **не являются доказательством production qualification**. Production status определяется только закрытием обязательных security/resilience gates и release-binary qualification.
 
 ---
 
@@ -57,51 +61,129 @@ python3 scripts/project_manager.py package     # Сборка дистрибут
 1. **Доступ в один клик** к приватной документации и сервисам для доверенного пула пользователей.
 2. **Отсутствие требования статического белого IP** на исходном сервере приложений.
 3. **Отсутствие общесистемного VPN** в штатном режиме: трафик сторонних приложений не перехватывается.
-4. **Принцип Fail-Closed:** при недоступности защищенного транспорта браузер блокирует прямой выход в Интернет.
-5. **Множественные независимые маршруты/транспорты** для устойчивости к сбоям VPS, провайдеров, UDP, DNS и DPI.
+4. **Fail-Closed:** отказ transport/authorization/runtime не может приводить к прямому публичному выходу.
+5. **Множественные независимые маршруты/транспорты** с доказуемой независимостью failure domains.
 6. **Конфигурация и отзыв доступа** на уровне отдельных пользователей и устройств.
-7. **Криптографически подписанные конфигурации** и манифесты обновлений.
-8. **Полная интеграция с [`Homiakus/SecureAcces`](https://github.com/Homiakus/SecureAcces)** как авторитетным центром авторизации и аутентификации.
-9. **Единое ядро безопасности на Rust** для Windows, Android, Linux и macOS.
-10. **Канонический браузерный движок на базе Servo.**
-11. **Android как приоритетная платформа 1-го уровня (Tier-1).**
+7. **Криптографически проверяемые конфигурации и релизы** с anti-rollback.
+8. **Интеграция с [`Homiakus/SecureAcces`](https://github.com/Homiakus/SecureAcces)** как авторитетным центром авторизации и аутентификации.
+9. **Capability isolation и bounded resources** как фундамент runtime/data-plane архитектуры.
+10. **WebGate-owned protected renderer/runtime** без неявного system-browser fallback.
+11. **Android и Windows как приоритетные production-платформы**, с дальнейшей унификацией Linux/macOS.
 
 ---
 
 ## 🏛️ Каноническая архитектура
 
-* **Основной браузерный движок:** Встроенный движок Servo (`BrowserCapsule`).
-* **Общее ядро:** Rust для политик безопасности, изоляции брокера, deep-link навигации, проверки подписей и протокола устройств.
-* **Изоляция сети:** Трафик направляется исключительно через локальный loopback HTTP/HTTPS прокси (`127.0.0.1:<порт>`), системный TUN не требуется.
-* **Отказоустойчивый транспорт:** Контроллер `TransportFailoverController` с поддержкой дуальных релеев (`Alpha`/`Beta`), автоматического переключения при сбоях и cooldown-восстановления.
-* **Идентификация устройств:** Аппаратные ключи ES256/P-256 (TPM, Keystore, Secure Enclave) и криптографические ключи Ed25519.
-* **Серверный шлюз и управление процессами:** Сервер на Go с реестром сервисов `ServiceRegistry`, менеджером процессов `ProcessManager` (PID, порты, запуск/остановка) и авторизацией SecureAcces.
-* **Telegram Admin Bot:** Интерактивный бот с командами `/services`, `/ports`, `/start_service`, `/stop_service`, `/restart_service` и Inline-кнопками для администратора.
-* **Арт-дирекция интерфейсов:** Премиальный швейцарский минимализм (ORGNZM / Editorial UI), 12-колоночная сетка, отсутствие шаблонных карточек.
+* **Protected browser/runtime:** текущая Servo-ветка остается measured compatibility/qualification lane; в `MASTER_PLAN.md` развивается WebGate Browser Runtime (WGBR) с zero-network renderer, capability IPC и ограниченным WGWeb profile. Никакой renderer не может считаться `Open` без положительного runtime evidence.
+* **Общее ядро безопасности:** Rust для security policy, device identity, broker boundaries и transport-side contracts; дальнейшее уменьшение числа независимых state machine является отдельной целью архитектуры.
+* **Изоляция сети:** browser/runtime работает через destination-restricted loopback boundary; системный TUN в штатном режиме не требуется.
+* **Transport supervisor:** отказоустойчивость должна управляться одним authoritative state machine с hysteresis, bounded recovery и evidence-based health.
+* **Relay plane:** целевая production-модель требует per-node identity, authenticated encrypted envelope, explicit routing и admission control. Shared cluster-secret / ambiguous routing не считаются конечной production-моделью.
+* **Идентификация устройств:** аппаратно защищенные ключи там, где платформа это позволяет, плюс криптографически проверяемая device identity.
+* **Серверный шлюз:** Go data/control plane с server-owned routing, SecureAcces authorization boundary и durable registries.
+* **Resource Governor:** количество соединений, streams, queues, workers, памяти и bandwidth должно быть ограничено явными квотами.
+* **Release Trust Kernel:** production update может быть принят только после локального вычисления digest, реальной signature verification, platform check и anti-rollback проверки.
 
 ---
 
-## 📱 Платформенные уровни (Platform Tiers)
+## 🧠 Математическая модель устойчивости
+
+WebGate рассматривается как управляемая распределенная система:
 
 ```text
-Tier 1  Windows x86_64
-Tier 1  Android arm64
-Tier 2  Linux x86_64/aarch64
-Tier 2  macOS arm64/x86_64
-Tier 3  OpenHarmony (исследование)
+state X(t)
+  ├── routing
+  ├── queues/resources
+  ├── latency/errors
+  ├── liveness
+  ├── authorization
+  ├── policy epoch
+  └── release/config epoch
+        ↓
+controller U(t)
+  ├── admit
+  ├── route
+  ├── failover
+  ├── shed
+  ├── recover
+  └── revoke
+```
+
+Базовый принцип:
+
+```text
+Capability isolation
++ Bounded resources
++ Evidence-based state
++ Explicit routing
++ Formal invariants
+```
+
+Подробная модель и найденные failure loops описаны в [`docs/research/CYBERNETIC_STABILITY_AUDIT_2026-09-08.md`](docs/research/CYBERNETIC_STABILITY_AUDIT_2026-09-08.md).
+
+План реализации: [`docs/implementation/CYBERNETIC_STABILITY_PROGRAM.md`](docs/implementation/CYBERNETIC_STABILITY_PROGRAM.md).
+
+---
+
+## 📱 Платформенные уровни
+
+Точный tier/status определяется `MASTER_PLAN.md` и qualification evidence. Историческая матрица платформ не должна интерпретироваться как доказательство равной production-зрелости.
+
+Целевые направления:
+
+```text
+Tier 1 target  Windows x86_64
+Tier 1 target  Android arm64
+Tier 2 target  Linux x86_64/aarch64
+Tier 2 target  macOS arm64/x86_64
+Research       OpenHarmony / дополнительные платформы
 ```
 
 ---
 
-## 🔒 Непреложные правила безопасности (Non-Negotiable Invariants)
+## 🔒 Непреложные правила безопасности
 
-1. **Servo по умолчанию:** Защищенная браузерная капсула на базе Servo.
-2. **Fail-Closed:** Немедленная блокировка при отказе сетевого пути; отсутствие автоматического отката на прямой выход в сеть.
-3. **Изоляция приложений:** Обычные приложения (Chrome, Telegram и др.) работают через штатный сетевой стек ОС.
-4. **Один ключ на устройство:** Закрытые ключи генерируются локально и никогда не передаются в открытом виде.
-5. **Подпись релизов и конфигураций:** Все пакеты и манифесты подписываются ключами релиза Ed25519 с проверкой контрольных сумм SHA-256 и защитой от отката версий.
-6. **Авторизация SecureAcces:** Серверный шлюз авторизует запросы через централизованный SecureAcces.
-7. **Ссылки — это идентификаторы:** Ссылки не содержат долгоживущих секретов авторизации.
+1. **Fail-Closed:** отказ transport/authority/runtime не создаёт direct fallback.
+2. **Application-scoped routing:** штатный режим не меняет OS default route.
+3. **Renderer proof:** пользовательское состояние `Open` возможно только после положительного доказательства реального renderer/runtime пути.
+4. **Один ключ на устройство / per-node identity:** закрытые ключи генерируются и хранятся локально; production relay/origin identity должна быть уникальной и ротируемой.
+5. **Release verification:** наличие непустой signature-строки не считается подписью; production verifier обязан реально проверить digest и криптографическую signature над canonical manifest.
+6. **SecureAcces authority:** transport reachability не является authorization.
+7. **Explicit routing:** transit stream не может выбирать «первый доступный» Origin.
+8. **Bounded resources:** нет неограниченных thread/task/stream/queue allocations.
+9. **No global HOL failure:** один медленный stream не должен блокировать независимые streams.
+10. **Unknown = deny:** неизвестные методы, маршруты, ключи, версии и policy states закрываются по умолчанию.
+11. **Truthful readiness:** compile/test/package success не равен `ProductionQualified`.
+
+---
+
+## 🚨 Обязательные P0 перед production qualification
+
+Актуальная детальная декомпозиция находится в `MASTER_PLAN.md` и Cybernetic Stability Program. После аудита 2026-09-08 к production blockers явно относятся:
+
+- реальная cryptographic release verification;
+- native secure relay envelope и per-node identity;
+- explicit multi-origin routing;
+- admission/resource governor;
+- устранение connection-wide head-of-line failure semantics;
+- единый authoritative failover/recovery supervisor;
+- release-binary chaos/load/soak qualification;
+- отсутствие противоречий между заявленным статусом и реальным evidence.
+
+Формальный gate:
+
+```text
+ProductionQualified =
+    no_open_P0
+    AND release_trust_qualified
+    AND relay_trust_qualified
+    AND routing_qualified
+    AND admission_qualified
+    AND failover_qualified
+    AND release_binary_E2E
+    AND soak_pass
+    AND chaos_pass
+```
 
 ---
 
@@ -109,37 +191,40 @@ Tier 3  OpenHarmony (исследование)
 
 ```text
 WebGate/
-├── README.md                           # Главная документация проекта (RU)
-├── MASTER_PLAN.md                      # Генеральный план реализации и инварианты
-├── Cargo.toml                          # Корневой манифест Rust Workspace
-├── crates/                             # Модули на Rust
-│   ├── webgate-core/                   # Ядро: политики, конфигурации, устройства, брокер
-│   ├── webgate-transport/              # Отказоустойчивые релеи и failover
-│   ├── webgate-browser/                # Капсула изоляции браузера Servo
-│   ├── webgate-platform/               # Адаптеры платформ (Android, Keystore)
-│   └── webgate-app/                    # Точка входа клиента и Editorial UI лаунчер
-├── server/                             # Серверный шлюз на Go
-│   ├── cmd/webgate-server/             # Точка входа сервера
-│   └── pkg/                            # Пакеты: gateway, process, telegram, registry, admin
-├── examples/                           # Примеры конфигурационных профилей
-│   ├── client-profile.toml             # Профиль клиента с выбором сервисов
-│   └── server-config.toml             # Манифест сервера с портами и бинарниками
-├── scripts/                            # Скрипты управления и сборки
-│   ├── project_manager.py              # Менеджер проектов
-│   ├── build_distribution.py           # Сборщик релизных дистрибутивов
-│   ├── check_architecture.py           # Проверка архитектурных границ
-│   ├── webgate.ps1                     # Лаунчер PowerShell
-│   └── webgate.sh                      # Лаунчер Bash
-└── docs/                               # Архитектурная и исследовательская документация
-    ├── architecture/                   # Архитектурные решения (ADR)
-    ├── development/                    # Руководства разработчика
-    ├── implementation/                 # Планы реализации
-    ├── integration/                    # Интеграция с SecureAcces
-    └── research/                       # Аудит и исследования
+├── README.md
+├── MASTER_PLAN.md                      # Единственный владелец canonical task status
+├── Cargo.toml
+├── crates/
+│   ├── webgate-core/
+│   ├── webgate-transport/
+│   ├── webgate-browser/
+│   ├── webgate-platform/
+│   └── webgate-app/
+├── server/
+│   ├── cmd/
+│   └── pkg/
+├── examples/
+├── scripts/
+└── docs/
+    ├── architecture/
+    ├── development/
+    ├── implementation/
+    │   └── CYBERNETIC_STABILITY_PROGRAM.md
+    ├── integration/
+    └── research/
+        └── CYBERNETIC_STABILITY_AUDIT_2026-09-08.md
 ```
 
 ---
 
 ## 🚦 Текущий статус
 
-**Все 10 фаз архитектурного плана (A–J) полностью реализованы, протестированы и верифицированы. Релизные сборки скомпилированы и готовы к эксплуатации.**
+**ACTIVE SECURITY / RESILIENCE CONVERGENCE.**
+
+Реализован значительный фундамент WebGate, включая fail-closed политики, durable state, gateway boundaries и экспериментальные/квалифицированные части transport stack. Однако текущий `main` **не должен маркироваться как production-qualified**, пока открыты обязательные P0 security/resilience tasks.
+
+Источники истины:
+
+1. `MASTER_PLAN.md` — canonical task/status owner.
+2. `docs/implementation/CYBERNETIC_STABILITY_PROGRAM.md` — детальный execution contract новой stability tranche.
+3. `docs/research/CYBERNETIC_STABILITY_AUDIT_2026-09-08.md` — математическое обоснование рисков и архитектурных изменений.
