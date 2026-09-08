@@ -125,6 +125,33 @@ Capability isolation
 
 ---
 
+## 🧩 Стратегия reuse и референсных реализаций
+
+WebGate использует принцип **policy-owned / mechanism-reused**: уникальные security-инварианты, routing/authorization semantics, resource governance и readiness остаются WebGate-owned, а зрелые внешние реализации рассматриваются для сокращения собственного commodity-кода.
+
+Ключевые референсы и кандидаты:
+
+- `tailscale/tailcat` / Tailscale data plane — userspace direct/relay path и NAT traversal как архитектурный референс;
+- `cloudflare/cloudflared` — authoritative transport supervisor, reconnect/backoff и tunnel-state decomposition;
+- `quinn-rs/quinn` — кандидат на QUIC streams/multiplexing вместо дальнейшего роста собственного transport machinery;
+- `openziti/ziti` — standing benchmark для zero-trust service identity, dark services и control/data-plane separation;
+- `mozilla/uniffi-rs` — кандидат на typed Rust↔Kotlin boundary для Android Tier-1;
+- `wstunnel` / `rathole` — референсы tunnel/reverse-tunnel mechanics без переноса generic-proxy policy;
+- TUF implementations (`rust-tuf`, `tough`) — secure-update threat model и anti-rollback/freeze protection;
+- `rustls` и vetted crypto crates — предпочтительное направление для TLS и низкоуровневых криптографических примитивов.
+
+Новые зависимости **не получают policy authority**. WebGate по-прежнему владеет destination restrictions, explicit origin/service routing, SecureAcces boundary, admission/resource budgets, fail-closed semantics и production qualification truth.
+
+Документы:
+
+- архитектурное решение: [`docs/architecture/ADR-0005-REFERENCE-REUSE-AND-DEPENDENCY-BOUNDARIES.md`](docs/architecture/ADR-0005-REFERENCE-REUSE-AND-DEPENDENCY-BOUNDARIES.md);
+- исследование репозиториев: [`docs/research/REFERENCE_REPOSITORY_REUSE_AUDIT_2026-09-08.md`](docs/research/REFERENCE_REPOSITORY_REUSE_AUDIT_2026-09-08.md);
+- пошаговая программа внедрения: [`docs/implementation/REFERENCE_REUSE_INTEGRATION_PROGRAM.md`](docs/implementation/REFERENCE_REUSE_INTEGRATION_PROGRAM.md).
+
+Первая рекомендуемая tranche: dependency admission gate → migration home-grown crypto → Quinn spike → authoritative supervisor convergence → UniFFI Android vertical slice → TUF mapping. Любая production-задача из этой программы должна быть отражена в `MASTER_PLAN.md`, который остаётся единственным владельцем canonical task status.
+
+---
+
 ## 📱 Платформенные уровни
 
 Точный tier/status определяется `MASTER_PLAN.md` и qualification evidence. Историческая матрица платформ не должна интерпретироваться как доказательство равной production-зрелости.
@@ -207,12 +234,15 @@ WebGate/
 ├── scripts/
 └── docs/
     ├── architecture/
+    │   └── ADR-0005-REFERENCE-REUSE-AND-DEPENDENCY-BOUNDARIES.md
     ├── development/
     ├── implementation/
-    │   └── CYBERNETIC_STABILITY_PROGRAM.md
+    │   ├── CYBERNETIC_STABILITY_PROGRAM.md
+    │   └── REFERENCE_REUSE_INTEGRATION_PROGRAM.md
     ├── integration/
     └── research/
-        └── CYBERNETIC_STABILITY_AUDIT_2026-09-08.md
+        ├── CYBERNETIC_STABILITY_AUDIT_2026-09-08.md
+        └── REFERENCE_REPOSITORY_REUSE_AUDIT_2026-09-08.md
 ```
 
 ---
@@ -223,8 +253,11 @@ WebGate/
 
 Реализован значительный фундамент WebGate, включая fail-closed политики, durable state, gateway boundaries и экспериментальные/квалифицированные части transport stack. Однако текущий `main` **не должен маркироваться как production-qualified**, пока открыты обязательные P0 security/resilience tasks.
 
-Источники истины:
+Источники истины и supporting execution evidence:
 
-1. `MASTER_PLAN.md` — canonical task/status owner.
-2. `docs/implementation/CYBERNETIC_STABILITY_PROGRAM.md` — детальный execution contract новой stability tranche.
+1. `MASTER_PLAN.md` — **единственный canonical task/status owner**.
+2. `docs/implementation/CYBERNETIC_STABILITY_PROGRAM.md` — детальный execution contract stability tranche.
 3. `docs/research/CYBERNETIC_STABILITY_AUDIT_2026-09-08.md` — математическое обоснование рисков и архитектурных изменений.
+4. `docs/architecture/ADR-0005-REFERENCE-REUSE-AND-DEPENDENCY-BOUNDARIES.md` — принятое правило reuse/dependency boundaries.
+5. `docs/implementation/REFERENCE_REUSE_INTEGRATION_PROGRAM.md` — execution contract для dependency/reuse tranches; сам по себе не владеет task status.
+6. `docs/research/REFERENCE_REPOSITORY_REUSE_AUDIT_2026-09-08.md` — evidence и rationale по внешним референсам.
